@@ -1,6 +1,8 @@
 package com.snatch.api.models;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -24,4 +26,13 @@ public class Engagement {
 
     private Double targetRate;
     private Double maxStartingRate;
+
+    public enum AuctionStatus {
+        PENDING, PHASE_1_SEALED, PHASE_2_LIVE, CLOSED
+    }
+
+    @Enumerated(EnumType.STRING)
+    private AuctionStatus status = AuctionStatus.PENDING;
+
+    private Double currentLiveRate;
 }
