@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: snatch-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - snatch-network
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: snatch-api
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: postgres
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - snatch-network
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_ vars are baked in at build time.
+        # This URL is accessed by the browser, not the container, so it uses localhost.
+        NEXT_PUBLIC_API_URL: http://localhost:8080/api
+    container_name: snatch-client
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - snatch-network
+
+volumes:
+  postgres_data:
+
+networks:
+  snatch-network:
+    driver: bridge
