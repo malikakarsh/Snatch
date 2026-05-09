@@ -1,6 +1,7 @@
 package com.snatch.api.models;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonProperty.Access;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -14,7 +15,7 @@ public class User {
     @Id
     private String email;
     
-    @JsonIgnore
+    @JsonProperty(access = Access.WRITE_ONLY)
     private String password;
     
     // "BEARER" or "BIDDER"
