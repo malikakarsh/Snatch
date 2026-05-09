@@ -4,6 +4,12 @@ A real-time, multi-phase auction platform supporting descending (Dutch) and asce
 
 ---
 
+![](./images/dashboard.png)
+
+![](./images/auctions.png)
+
+![](./images/won_auctions.png)
+
 ## System Architecture
 
 ```
