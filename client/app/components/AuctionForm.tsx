@@ -166,7 +166,7 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
             </div>
             <div>
               <label className="block text-xs font-medium text-zinc-400 mb-2 uppercase tracking-widest">Target Price ($) *</label>
-              <p className="text-xs text-zinc-500 mb-2">Must be below max. Bids must reach this or auction cancels.</p>
+              <p className="text-xs text-zinc-500 mb-2">Bids must reach this or auction cancels.</p>
               <input
                 type="number"
                 name="targetRate"
