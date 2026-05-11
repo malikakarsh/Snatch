@@ -13,19 +13,15 @@ export interface Engagement {
   phase1StartTime?: string;
   phase1EndTime?: string;
   phase2StartTime?: string;
-  // Optional informational schedule for OPEN auctions. Bearer still
-  // manually starts and stops the auction; these are just hints to bidders.
-  openStartTime?: string;
-  openEndTime?: string;
-  // OPEN-only: bearer-configurable first-bid grace per item (seconds).
-  graceSeconds?: number;
-  // Set when the auction was CANCELLED or stopped early. Frontend uses this
-  // to render reason banners (e.g. "Stopped by auctioneer", "No participants").
-  cancelReason?: string;
+  phase2TimerDuration?: number;
   winnerId?: string;
-  auctioneerName?: string;
+  auctioneerName?: string | null;
   bearerEmail?: string;
   bearerEmailInput?: string;
+  openStartTime?: string;
+  openEndTime?: string;
+  graceSeconds?: number;
+  cancelReason?: string;
 }
 
 export interface Submission {

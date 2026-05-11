@@ -93,9 +93,23 @@ public class DescendingAuctionService implements AuctionEngine {
                 .findFirstByEngagementIdAndPhaseOrderByRateAsc(engagementId, Submission.SubmissionPhase.PHASE_1);
 
         if (lowestSealedOffer != null) {
-            Double phase2Start = Math.min(engagement.getMaxStartingRate(), lowestSealedOffer.getRate());
-            engagement.setCurrentLiveRate(phase2Start);
-            System.out.println("Phase 1 closed. Lowest sealed bid: $" + lowestSealedOffer.getRate() + ". Phase 2 starting rate: $" + phase2Start);
+            // For descending auctions, Phase 2 starts at the minimum of (for each bidder: min(maxStartingRate, their last Phase 1 bid))
+            java.util.List<Submission> allPhase1Submissions = submissionRepository.findByEngagementIdAndPhaseOrderBySubmittedAtDesc(engagementId, Submission.SubmissionPhase.PHASE_1);
+            
+            Set<String> processedProviders = new java.util.HashSet<>();
+            Double minPhase2Start = engagement.getMaxStartingRate();
+            
+            // Process submissions in desc order (most recent first) to get the last submission per provider
+            for (Submission sub : allPhase1Submissions) {
+                if (!processedProviders.contains(sub.getProviderId())) {
+                    processedProviders.add(sub.getProviderId());
+                    Double adjustedPrice = Math.min(engagement.getMaxStartingRate(), sub.getRate());
+                    minPhase2Start = Math.min(minPhase2Start, adjustedPrice);
+                }
+            }
+            
+            engagement.setCurrentLiveRate(minPhase2Start);
+            System.out.println("Phase 1 closed. Phase 2 starting rate (from last bids): $" + minPhase2Start);
         } else {
             engagement.setCurrentLiveRate(engagement.getMaxStartingRate());
             System.out.println("Phase 1 closed. No bids found. Defaulting to Max Starting Rate: $" + engagement.getMaxStartingRate());
@@ -143,6 +157,11 @@ public class DescendingAuctionService implements AuctionEngine {
         boolean participatedInPhase1 = submissionRepository.existsByEngagementIdAndProviderIdAndPhase(engagementId, providerId, Submission.SubmissionPhase.PHASE_1);
         if (!participatedInPhase1) {
             throw new IllegalStateException("Only bidders who submitted an offer in Phase 1 can participate in Phase 2.");
+        }
+
+        Set<String> currentRoundBidderSet = currentRoundBidders.get(engagementId);
+        if (currentRoundBidderSet != null && currentRoundBidderSet.contains(providerId)) {
+            throw new IllegalStateException("You may only submit one bid per round. Wait for the next round to place another bid.");
         }
 
         // Validate: Phase 2 bids must always go lower. First Phase 2 bid is bounded by the Phase 1 sealed bid.

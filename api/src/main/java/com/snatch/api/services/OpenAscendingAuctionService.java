@@ -23,20 +23,17 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * OPEN ascending auction engine.
  *
- * State machine per item:
- *   GRACE   — item just opened, configurable seconds for someone to place
- *             the first bid. Falls back to DEFAULT_GRACE_SECONDS if the
- *             engagement didn't specify graceSeconds. Item is SKIPPED on
- *             expiry with no bid.
- *   LIVE    — at least one bid received; timer resets to SILENCE_RESET_SECONDS
- *             on every new higher bid. When that window passes with no new
- *             bid, we move to FINALE.
- *   FINALE  — fixed 3-2-1 ("going once / going twice / last call") sequence.
- *             Leading bidder at FINALE start wins. Item is SOLD.
+ * State machine per item: GRACE — item just opened, configurable seconds for
+ * someone to place the first bid. Falls back to DEFAULT_GRACE_SECONDS if the
+ * engagement didn't specify graceSeconds. Item is SKIPPED on expiry with no
+ * bid. LIVE — at least one bid received; timer resets to SILENCE_RESET_SECONDS
+ * on every new higher bid. When that window passes with no new bid, we move to
+ * FINALE. FINALE — fixed 3-2-1 ("going once / going twice / last call")
+ * sequence. Leading bidder at FINALE start wins. Item is SOLD.
  *
  * Per-engagement state held in ConcurrentHashMaps. A per-engagement
- * ReentrantLock serialises bid evaluation, scheduled state transitions,
- * AND the bearer's emergency-stop button.
+ * ReentrantLock serialises bid evaluation, scheduled state transitions, AND the
+ * bearer's emergency-stop button.
  */
 @Service("openAscendingEngine")
 public class OpenAscendingAuctionService implements AuctionEngine {
@@ -64,6 +61,7 @@ public class OpenAscendingAuctionService implements AuctionEngine {
     private final Map<Long, java.util.Set<String>> itemPassedBidders = new ConcurrentHashMap<>();
 
     private static class ItemRuntime {
+
         final Long itemId;
         final String itemName;
         final Double startingPrice;
@@ -76,18 +74,21 @@ public class OpenAscendingAuctionService implements AuctionEngine {
         ItemRuntime(AuctionItem it) {
             this.itemId = it.getId();
             this.itemName = it.getName();
-            this.startingPrice = it.getStartingPrice() != null ? it.getStartingPrice() : 0.0;
+            Double price = it.getStartingPrice();
+            this.startingPrice = price != null ? price : 0.0;
             this.sequenceOrder = it.getSequenceOrder();
             this.highestBid = this.startingPrice;
         }
 
-        enum Phase { GRACE, LIVE, FINALE_3, FINALE_2, FINALE_1, DONE }
+        enum Phase {
+            GRACE, LIVE, FINALE_3, FINALE_2, FINALE_1, DONE
+        }
     }
 
     public OpenAscendingAuctionService(EngagementRepository engagementRepository,
-                                       AuctionItemRepository itemRepository,
-                                       SeatRepository seatRepository,
-                                       SimpMessagingTemplate messagingTemplate) {
+            AuctionItemRepository itemRepository,
+            SeatRepository seatRepository,
+            SimpMessagingTemplate messagingTemplate) {
         this.engagementRepository = engagementRepository;
         this.itemRepository = itemRepository;
         this.seatRepository = seatRepository;
@@ -100,14 +101,20 @@ public class OpenAscendingAuctionService implements AuctionEngine {
 
     private int graceFor(Engagement eng) {
         Integer g = eng.getGraceSeconds();
-        if (g == null) return DEFAULT_GRACE_SECONDS;
-        if (g < MIN_GRACE) return MIN_GRACE;
-        if (g > MAX_GRACE) return MAX_GRACE;
+        // FIXED: Check for null before unboxing
+        if (g == null) {
+            return DEFAULT_GRACE_SECONDS;
+        }
+        if (g < MIN_GRACE) {
+            return MIN_GRACE;
+        }
+        if (g > MAX_GRACE) {
+            return MAX_GRACE;
+        }
         return g;
     }
 
     // ---- AuctionEngine impl ----
-
     @Override
     public Engagement initializeAuction(Engagement engagement) {
         if (engagement.getTargetRate() != null && engagement.getTargetRate() < 0) {
@@ -116,8 +123,11 @@ public class OpenAscendingAuctionService implements AuctionEngine {
         // Clamp grace to valid range up-front so it's stable later.
         if (engagement.getGraceSeconds() != null) {
             int g = engagement.getGraceSeconds();
-            if (g < MIN_GRACE) engagement.setGraceSeconds(MIN_GRACE);
-            else if (g > MAX_GRACE) engagement.setGraceSeconds(MAX_GRACE);
+            if (g < MIN_GRACE) {
+                engagement.setGraceSeconds(MIN_GRACE); 
+            }else if (g > MAX_GRACE) {
+                engagement.setGraceSeconds(MAX_GRACE);
+            }
         }
         engagement.setStatus(Engagement.AuctionStatus.PENDING);
         System.out.println("Initializing OPEN ascending auction " + engagement.getTitle()
@@ -165,10 +175,10 @@ public class OpenAscendingAuctionService implements AuctionEngine {
 
             // Track whether this bid is rescuing an item from the gavel. Used
             // only for logging/clarity — the broadcast is the same shape either way.
-            boolean reopenedFromFinale =
-                current.phase == ItemRuntime.Phase.FINALE_3
-                || current.phase == ItemRuntime.Phase.FINALE_2
-                || current.phase == ItemRuntime.Phase.FINALE_1;
+            boolean reopenedFromFinale
+                    = current.phase == ItemRuntime.Phase.FINALE_3
+                    || current.phase == ItemRuntime.Phase.FINALE_2
+                    || current.phase == ItemRuntime.Phase.FINALE_1;
 
             current.highestBid = newRate;
             current.highestBidder = providerId;
@@ -214,7 +224,6 @@ public class OpenAscendingAuctionService implements AuctionEngine {
     }
 
     // ---- OPEN-specific public methods ----
-
     @Transactional
     public Seat claimSeat(Long engagementId, String bidderEmail, Integer seatIndex) {
         if (seatIndex == null || seatIndex < 0 || seatIndex >= MAX_SEATS) {
@@ -283,16 +292,15 @@ public class OpenAscendingAuctionService implements AuctionEngine {
     }
 
     /**
-     * Auto-start path invoked by the scheduler when openStartTime elapses.
-     * If no seats are claimed → CANCEL with reason NO_PARTICIPANTS.
-     * If seats exist → behave identically to manual startOpenAuction.
+     * Auto-start path invoked by the scheduler when openStartTime elapses. If
+     * no seats are claimed → CANCEL with reason NO_PARTICIPANTS. If seats exist
+     * → behave identically to manual startOpenAuction.
      *
-     * A small cushion past the scheduled time is required before we cancel-for-empty,
-     * so that:
-     *   (a) the 5-second scheduler poll doesn't race auctions created moments before
-     *       their start time, and
-     *   (b) a bidder loading the page right at the start moment has a brief window
-     *       to claim a seat before the auction goes away.
+     * A small cushion past the scheduled time is required before we
+     * cancel-for-empty, so that: (a) the 5-second scheduler poll doesn't race
+     * auctions created moments before their start time, and (b) a bidder
+     * loading the page right at the start moment has a brief window to claim a
+     * seat before the auction goes away.
      */
     private static final int CANCEL_IF_EMPTY_CUSHION_SECONDS = 30;
 
@@ -306,9 +314,11 @@ public class OpenAscendingAuctionService implements AuctionEngine {
         if (!"OPEN".equalsIgnoreCase(eng.getAuctionFormat())) {
             return eng;
         }
-
+    
+    
         long seatCount = seatRepository.countByEngagementId(engagementId);
-        if (seatCount == 0) {
+
+    if (seatCount == 0) {
             // Wait for the cushion to pass before we declare "nobody showed up".
             java.time.LocalDateTime startTime = eng.getOpenStartTime();
             if (startTime != null) {
@@ -416,16 +426,14 @@ public class OpenAscendingAuctionService implements AuctionEngine {
     }
 
     /**
-     * A bidder gives up the CURRENT item only. Their seat is preserved for
-     * the next item. Cleared automatically at the next openNextItem.
+     * A bidder gives up the CURRENT item only. Their seat is preserved for the
+     * next item. Cleared automatically at the next openNextItem.
      *
-     * Rules:
-     *   - Must be seated.
-     *   - Cannot pass if you're the current high bidder (you're winning).
-     *   - Passing is idempotent — passing twice is fine.
-     *   - If everyone seated has passed AND nobody has bid yet on the item,
-     *     fast-forward to SKIPPED (don't waste the GRACE timer).
-     *   - Pass is private — no broadcast to other bidders.
+     * Rules: - Must be seated. - Cannot pass if you're the current high bidder
+     * (you're winning). - Passing is idempotent — passing twice is fine. - If
+     * everyone seated has passed AND nobody has bid yet on the item,
+     * fast-forward to SKIPPED (don't waste the GRACE timer). - Pass is private
+     * — no broadcast to other bidders.
      */
     @Transactional
     public void passCurrentItem(Long engagementId, String providerId) {
@@ -475,14 +483,12 @@ public class OpenAscendingAuctionService implements AuctionEngine {
      * A bidder leaves the auction entirely. Their seat row is deleted and
      * broadcasted via SEAT_UPDATE so the grid empties their slot.
      *
-     * Rules:
-     *   - Must be seated.
-     *   - Cannot leave if you're the current high bidder on the active item.
-     *     (Their bid stands — they would still pay if they "won" — so the
-     *     only clean policy is: wait it out.)
-     *   - If leaving empties the seat grid entirely while the auction is LIVE,
-     *     the auction ends immediately. Current item is skipped, remaining
-     *     items skipped, status flips to CLOSED with ALL_PARTICIPANTS_LEFT.
+     * Rules: - Must be seated. - Cannot leave if you're the current high bidder
+     * on the active item. (Their bid stands — they would still pay if they
+     * "won" — so the only clean policy is: wait it out.) - If leaving empties
+     * the seat grid entirely while the auction is LIVE, the auction ends
+     * immediately. Current item is skipped, remaining items skipped, status
+     * flips to CLOSED with ALL_PARTICIPANTS_LEFT.
      */
     @Transactional
     public void leaveAuction(Long engagementId, String providerId) {
@@ -502,7 +508,9 @@ public class OpenAscendingAuctionService implements AuctionEngine {
             seatRepository.delete(seatOpt.get());
             // Also drop them from the passed-set if present, since they're gone.
             java.util.Set<String> passed = itemPassedBidders.get(engagementId);
-            if (passed != null) passed.remove(providerId);
+            if (passed != null) {
+                passed.remove(providerId);
+            }
 
             // Broadcast updated seat grid.
             List<Seat> remaining = seatRepository.findByEngagementIdOrderBySeatIndexAsc(engagementId);
@@ -567,13 +575,18 @@ public class OpenAscendingAuctionService implements AuctionEngine {
     }
 
     // ---- Internal state-machine helpers ----
-
     private void openNextItem(Long engagementId) {
         ReentrantLock lock = lockFor(engagementId);
         lock.lock();
         try {
             Engagement eng = engagementRepository.findById(engagementId).orElse(null);
-            if (eng == null) return;
+            if (eng == null) {
+                return;
+            
+            }
+              
+            
+            // FIXED: Use graceFor() which safely handles null with default
             int grace = graceFor(eng);
 
             List<AuctionItem> items = itemRepository.findByEngagementIdOrderBySequenceOrderAsc(engagementId);
@@ -645,7 +658,9 @@ public class OpenAscendingAuctionService implements AuctionEngine {
         lock.lock();
         try {
             ItemRuntime rt = activeItems.get(engagementId);
-            if (rt == null || rt.phase != ItemRuntime.Phase.LIVE) return;
+            if (rt == null || rt.phase != ItemRuntime.Phase.LIVE) {
+                return;
+            }
             rt.phase = ItemRuntime.Phase.FINALE_3;
             broadcastFinaleTick(engagementId, rt, "Going once...", 3);
             scheduleAfter(engagementId, FINALE_TICK_SECONDS, () -> finaleTwo(engagementId));
@@ -659,7 +674,9 @@ public class OpenAscendingAuctionService implements AuctionEngine {
         lock.lock();
         try {
             ItemRuntime rt = activeItems.get(engagementId);
-            if (rt == null || rt.phase != ItemRuntime.Phase.FINALE_3) return;
+            if (rt == null || rt.phase != ItemRuntime.Phase.FINALE_3) {
+                return;
+            }
             rt.phase = ItemRuntime.Phase.FINALE_2;
             broadcastFinaleTick(engagementId, rt, "Going twice...", 2);
             scheduleAfter(engagementId, FINALE_TICK_SECONDS, () -> finaleOne(engagementId));
@@ -673,7 +690,9 @@ public class OpenAscendingAuctionService implements AuctionEngine {
         lock.lock();
         try {
             ItemRuntime rt = activeItems.get(engagementId);
-            if (rt == null || rt.phase != ItemRuntime.Phase.FINALE_2) return;
+            if (rt == null || rt.phase != ItemRuntime.Phase.FINALE_2) {
+                return;
+            }
             rt.phase = ItemRuntime.Phase.FINALE_1;
             broadcastFinaleTick(engagementId, rt, "Last call...", 1);
             scheduleAfter(engagementId, FINALE_TICK_SECONDS, () -> handleSold(engagementId));
@@ -687,13 +706,17 @@ public class OpenAscendingAuctionService implements AuctionEngine {
         lock.lock();
         try {
             ItemRuntime rt = activeItems.get(engagementId);
-            if (rt == null) return;
+            if (rt == null) {
+                return;
+            }
             // A late bid during FINALE_1 may have pulled the item back to LIVE
             // and reset the silence timer. In that case the scheduled handleSold
             // task races with the bid; whichever takes the lock second sees the
             // new phase and bails. Without this check, we'd incorrectly SOLD an
             // item that was rescued.
-            if (rt.phase != ItemRuntime.Phase.FINALE_1) return;
+            if (rt.phase != ItemRuntime.Phase.FINALE_1) {
+                return;
+            }
             rt.phase = ItemRuntime.Phase.DONE;
             markItem(rt.itemId, AuctionItem.ItemStatus.SOLD, rt.highestBidder, rt.highestBid);
 
@@ -741,7 +764,9 @@ public class OpenAscendingAuctionService implements AuctionEngine {
 
     private void markItem(Long itemId, AuctionItem.ItemStatus status, String winnerId, Double soldPrice) {
         AuctionItem it = itemRepository.findById(itemId).orElse(null);
-        if (it == null) return;
+        if (it == null) {
+            return;
+        }
         it.setStatus(status);
         it.setWinnerId(winnerId);
         it.setSoldPrice(soldPrice);
@@ -755,6 +780,8 @@ public class OpenAscendingAuctionService implements AuctionEngine {
 
     private void cancelTimer(Long engagementId) {
         ScheduledFuture<?> existing = activeTimers.remove(engagementId);
-        if (existing != null) existing.cancel(false);
+        if (existing != null) {
+            existing.cancel(false);
+        }
     }
 }
