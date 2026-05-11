@@ -154,6 +154,8 @@ export default function AuctionCard({ engagement: initialEngagement, onStateChan
 
   const isPhase1 = engagement.status === 'PENDING' || engagement.status === 'PHASE_1_SEALED';
   const isPhase2 = engagement.status === 'PHASE_2_LIVE';
+  const phase1PriceLabel = engagement.auctionType === 'DESCENDING' ? 'Target Price' : 'Expected';
+  const phase1Price = engagement.auctionType === 'DESCENDING' ? engagement.targetRate : engagement.maxStartingRate;
 
   const countdownColor =
     countdown === null || countdown > 10
@@ -189,10 +191,10 @@ export default function AuctionCard({ engagement: initialEngagement, onStateChan
 
           <div className="flex items-center gap-4 shrink-0">
             {/* Phase 1: expected price */}
-            {isPhase1 && engagement.maxStartingRate != null && (
+            {isPhase1 && phase1Price != null && (
               <div className="text-right">
-                <p className="text-[9px] text-blue-400 uppercase tracking-widest font-bold">Expected</p>
-                <p className="text-lg text-blue-300 font-bold">${engagement.maxStartingRate.toFixed(2)}</p>
+                <p className="text-[9px] text-blue-400 uppercase tracking-widest font-bold">{phase1PriceLabel}</p>
+                <p className="text-lg text-blue-300 font-bold">${phase1Price.toFixed(2)}</p>
               </div>
             )}
 
@@ -204,11 +206,50 @@ export default function AuctionCard({ engagement: initialEngagement, onStateChan
               </div>
             )}
 
-            {/* Closed: final rate for bearer */}
-            {engagement.status === 'CLOSED' && engagement.currentLiveRate != null && userRole !== 'BIDDER' && (
+            {/* Phase 2: expected price (bidder only) */}
+            {isPhase2 && phase1Price != null && userRole === 'BIDDER' && (
+              <div className="text-right">
+                <p className="text-[9px] text-blue-400 uppercase tracking-widest font-bold">{phase1PriceLabel}</p>
+                <p className="text-lg text-blue-300 font-bold">${phase1Price.toFixed(2)}</p>
+              </div>
+            )}
+
+            {/* Closed: expected vs final rate for bearer */}
+            {engagement.status === 'CLOSED' && engagement.currentLiveRate != null && userRole === 'BEARER' && (
+              <div className="text-right space-y-2">
+                <div>
+                  <p className="text-[9px] text-blue-400 uppercase tracking-widest font-bold">Expected</p>
+                  <p className="text-lg text-blue-300 font-bold">${engagement.targetRate?.toFixed(2) || '0.00'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] text-zinc-400 uppercase tracking-widest font-bold">Final / Status</p>
+                  <p className={`text-lg font-bold ${
+                    engagement.currentLiveRate >= engagement.targetRate!
+                      ? 'text-emerald-400'
+                      : 'text-red-400'
+                  }`}>
+                    ${engagement.currentLiveRate.toFixed(2)} 
+                    <span className="text-xs ml-1">
+                      {engagement.currentLiveRate >= engagement.targetRate! ? '✓ Sold' : '✗ Below'}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Closed: final rate for bearer (non-matching) */}
+            {engagement.status === 'CLOSED' && engagement.currentLiveRate != null && userRole !== 'BIDDER' && userRole !== 'BEARER' && (
               <div className="text-right">
                 <p className="text-[9px] text-zinc-400 uppercase tracking-widest font-bold">Final Rate</p>
                 <p className="text-lg text-zinc-200 font-bold">${engagement.currentLiveRate.toFixed(2)}</p>
+              </div>
+            )}
+
+            {/* Closed: cancelled for bearer */}
+            {engagement.status === 'CANCELLED' && userRole === 'BEARER' && (
+              <div className="text-right">
+                <p className="text-[9px] text-red-400 uppercase tracking-widest font-bold">Expected</p>
+                <p className="text-lg text-red-300 font-bold">${engagement.targetRate?.toFixed(2) || '0.00'}</p>
               </div>
             )}
 

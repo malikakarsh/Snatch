@@ -249,17 +249,6 @@ export default function OfferForm({
                 >
                   Quit Auction
                 </button>
-
-                {status === 'PHASE_1_SEALED' && user?.role === 'BEARER' && (
-                  <button
-                    type="button"
-                    onClick={handleTransitionToLive}
-                    disabled={loading}
-                    className="flex-1 py-3.5 px-6 bg-transparent border border-white/20 text-white font-medium rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white/5"
-                  >
-                    {loading ? 'Transitioning...' : 'Move to Live Round'}
-                  </button>
-                )}
               </div>
             </form>
           )}
