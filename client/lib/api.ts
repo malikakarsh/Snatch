@@ -12,6 +12,7 @@ export interface Engagement {
   phase1StartTime?: string;
   phase1EndTime?: string;
   phase2StartTime?: string;
+  phase2TimerDuration?: number;
   winnerId?: string;
 }
 

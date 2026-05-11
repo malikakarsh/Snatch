@@ -17,7 +17,7 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
     targetRate: '',
     maxStartingRate: '',
     phase1EndTime: '',
-    phase2StartTime: '',
+    phase2DelaySeconds: '0',
     phase2TimerDuration: '30',
   });
 
@@ -58,33 +58,38 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
       }
     }
 
-    if (!formData.phase1EndTime || !formData.phase2StartTime) {
-      setError('Both Phase 1 End Time and Phase 2 Start Time are required.');
+    const phase2DelaySeconds = formData.phase2DelaySeconds.trim() === '' ? 0 : parseInt(formData.phase2DelaySeconds, 10);
+    if (!formData.phase1EndTime) {
+      setError('Phase 1 End Time is required.');
+      return;
+    }
+    if (isNaN(phase2DelaySeconds) || phase2DelaySeconds < 0) {
+      setError('Phase 2 delay must be zero or a positive number of seconds.');
       return;
     }
 
     const p1End = new Date(formData.phase1EndTime);
-    const p2Start = new Date(formData.phase2StartTime);
-    if (p1End >= p2Start) {
-      setError('Phase 1 End Time must be strictly before Phase 2 Start Time.');
+    const phase2Start = new Date(p1End.getTime() + phase2DelaySeconds * 1000);
+    if (phase2Start < p1End) {
+      setError('Phase 2 Start Time could not be computed.');
       return;
     }
 
     setLoading(true);
     try {
-      const payload = {
+      const payload: Engagement = {
         title: formData.title,
         description: formData.description,
         auctionType: formData.auctionType,
-        targetRate: isNaN(targetRate) ? null : targetRate,
-        maxStartingRate: isNaN(maxStartingRate) ? null : maxStartingRate,
+        targetRate: isNaN(targetRate) ? 0 : targetRate,
+        maxStartingRate: isNaN(maxStartingRate) ? 0 : maxStartingRate,
         phase1StartTime: new Date().toISOString().replace('Z', ''),
         phase1EndTime: new Date(formData.phase1EndTime).toISOString().replace('Z', ''),
-        phase2StartTime: new Date(formData.phase2StartTime).toISOString().replace('Z', ''),
+        phase2StartTime: phase2Start.toISOString().replace('Z', ''),
         phase2TimerDuration: parseInt(formData.phase2TimerDuration, 10) || 30,
       };
 
-      const engagement = await engagementAPI.createEngagement(payload as any);
+      const engagement = await engagementAPI.createEngagement(payload);
 
       setFormData({
         title: '',
@@ -93,7 +98,7 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
         targetRate: '',
         maxStartingRate: '',
         phase1EndTime: '',
-        phase2StartTime: '',
+        phase2DelaySeconds: '0',
         phase2TimerDuration: '30',
       });
 
@@ -142,8 +147,8 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
             onChange={handleChange}
             className="w-full px-4 py-3 bg-black/50 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-colors appearance-none"
           >
-            <option value="DESCENDING">Descending (Dutch) — bidders go lower</option>
-            <option value="ASCENDING">Ascending (English) — bidders go higher</option>
+            <option value="DESCENDING">Descending (Dutch) - bidders go lower</option>
+            <option value="ASCENDING">Ascending (English) - bidders go higher</option>
           </select>
         </div>
 
@@ -198,8 +203,9 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
 
         {/* Times */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div>
-            <label className="block text-xs font-medium text-zinc-400 mb-2 uppercase tracking-widest">Phase 1 End Time *</label>
+          <div className="flex flex-col gap-2">
+            <label className="block text-xs font-medium text-zinc-400 uppercase tracking-widest">Phase 1 End Time *</label>
+            <p className="text-xs text-zinc-500">When Phase 1 closes and the delay countdown begins.</p>
             <input
               type="datetime-local"
               name="phase1EndTime"
@@ -209,15 +215,18 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
               className="w-full px-4 py-3 bg-zinc-800 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-colors [color-scheme:dark]"
             />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-zinc-400 mb-2 uppercase tracking-widest">Phase 2 Start Time *</label>
+          <div className="flex flex-col gap-2">
+            <label className="block text-xs font-medium text-zinc-400 uppercase tracking-widest">Phase 2 Delay (seconds)</label>
+            <p className="text-xs text-zinc-500">Phase 2 starts this many seconds after Phase 1 ends.</p>
             <input
-              type="datetime-local"
-              name="phase2StartTime"
-              value={formData.phase2StartTime}
+              type="number"
+              name="phase2DelaySeconds"
+              value={formData.phase2DelaySeconds}
               onChange={handleChange}
-              required
+              min="0"
+              step="1"
               className="w-full px-4 py-3 bg-zinc-800 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-colors [color-scheme:dark]"
+              placeholder="0"
             />
           </div>
         </div>
