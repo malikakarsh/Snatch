@@ -3,7 +3,7 @@
 import { Engagement, favoritesAPI, getAuctioneerDisplayName } from "@/lib/api";
 import OfferForm from "./OfferForm";
 import OpenAuctionPanel from "./OpenAuctionPanel";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, startTransition } from "react";
 import { useAuth } from "./AuthProvider";
 import { Client } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
@@ -71,30 +71,40 @@ export default function AuctionCard({
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onStateChangeRef = useRef(onStateChange);
-  onStateChangeRef.current = onStateChange;
 
   useEffect(() => {
-    setFavorited(isFavorited);
+    onStateChangeRef.current = onStateChange;
+  }, [onStateChange]);
+
+  useEffect(() => {
+    startTransition(() => {
+      setFavorited(isFavorited);
+    });
   }, [isFavorited]);
 
   useEffect(() => {
-    setEngagement((prev) => ({
-      ...prev,
-      status: initialEngagement.status,
-      currentLiveRate: initialEngagement.currentLiveRate,
-      phase1EndTime: initialEngagement.phase1EndTime,
-      phase2StartTime: initialEngagement.phase2StartTime,
-      openStartTime: initialEngagement.openStartTime,
-      openEndTime: initialEngagement.openEndTime,
-      graceSeconds: initialEngagement.graceSeconds,
-      cancelReason: initialEngagement.cancelReason,
-      auctioneerName: initialEngagement.auctioneerName,
-      bearerEmail: initialEngagement.bearerEmail,
-      auctionFormat: initialEngagement.auctionFormat,
-    }));
-    if (initialEngagement.status === "PHASE_2_LIVE") {
-      setBidWindowOpen(true);
-    }
+    startTransition(() => {
+      setEngagement((prev) => ({
+        ...prev,
+        status: initialEngagement.status,
+        currentLiveRate: initialEngagement.currentLiveRate,
+        phase1EndTime: initialEngagement.phase1EndTime,
+        phase2StartTime: initialEngagement.phase2StartTime,
+        openStartTime: initialEngagement.openStartTime,
+        openEndTime: initialEngagement.openEndTime,
+        graceSeconds: initialEngagement.graceSeconds,
+        cancelReason: initialEngagement.cancelReason,
+        auctioneerName: initialEngagement.auctioneerName,
+        bearerEmail: initialEngagement.bearerEmail,
+        auctionFormat: initialEngagement.auctionFormat,
+        targetRate: initialEngagement.targetRate,
+        maxStartingRate: initialEngagement.maxStartingRate,
+        auctionType: initialEngagement.auctionType,
+      }));
+      if (initialEngagement.status === "PHASE_2_LIVE") {
+        setBidWindowOpen(true);
+      }
+    });
   }, [
     initialEngagement.status,
     initialEngagement.currentLiveRate,
@@ -107,6 +117,9 @@ export default function AuctionCard({
     initialEngagement.auctioneerName,
     initialEngagement.bearerEmail,
     initialEngagement.auctionFormat,
+    initialEngagement.targetRate,
+    initialEngagement.maxStartingRate,
+    initialEngagement.auctionType,
   ]);
 
   const handleToggleFavorite = async (e: React.MouseEvent) => {
@@ -205,13 +218,8 @@ export default function AuctionCard({
       client.deactivate();
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, engagement.id, startCountdown, isOpenFormat]);
 
-  // Lightweight WebSocket for status flips on OPEN-format cards, so the
-  // header status badge updates without needing the user to expand the panel.
-  // Important because we want PENDING → CANCELLED (e.g. NO_PARTICIPANTS) and
-  // PENDING → PHASE_2_LIVE (auto-start) to be visible on the card itself.
   useEffect(() => {
     if (!engagement.id || !isOpenFormat) return;
     const client = new Client({
@@ -264,9 +272,6 @@ export default function AuctionCard({
     return new Date(utcDateStr).toLocaleString();
   };
 
-  // OPEN auction times are now sent from the frontend as UTC ISO (with Z stripped),
-  // matching the CLOSED-auction pattern. So we re-append Z before parsing for
-  // correct local-timezone display.
   const formatLocalTime = (dateStr: string | undefined) => {
     if (!dateStr) return "";
     try {
@@ -284,9 +289,7 @@ export default function AuctionCard({
   const phase1PriceLabel =
     engagement.auctionType === "DESCENDING" ? "Target Price" : "Expected";
   const phase1Price =
-    engagement.auctionType === "DESCENDING"
-      ? engagement.targetRate
-      : engagement.maxStartingRate;
+    engagement.targetRate ?? initialEngagement.targetRate ?? undefined;
 
   const countdownColor =
     countdown === null || countdown > 10
@@ -368,8 +371,6 @@ export default function AuctionCard({
           </div>
 
           <div className="flex items-center gap-4 shrink-0">
-            {/* Phase 1: expected price (CLOSED auctions only — OPEN auctions
-                don't have an engagement-level starting price; each item has its own). */}
             {!isOpenFormat && isPhase1 && phase1Price != null && (
               <div className="text-right">
                 <p className="text-[9px] text-blue-400 uppercase tracking-widest font-bold">
@@ -395,7 +396,6 @@ export default function AuctionCard({
                 </div>
               )}
 
-            {/* Phase 2: expected price (bidder only, CLOSED auctions only) */}
             {!isOpenFormat && isPhase2 && phase1Price != null && userRole === "BIDDER" && (
               <div className="text-right">
                 <p className="text-[9px] text-blue-400 uppercase tracking-widest font-bold">
@@ -407,7 +407,6 @@ export default function AuctionCard({
               </div>
             )}
 
-            {/* Closed: expected vs final rate for bearer */}
             {engagement.status === "CLOSED" &&
               engagement.currentLiveRate != null &&
               userRole === "BEARER" && (
@@ -417,7 +416,7 @@ export default function AuctionCard({
                       Expected
                     </p>
                     <p className="text-lg text-blue-300 font-bold">
-                      ${engagement.targetRate?.toFixed(2) || "0.00"}
+                      ${(engagement.targetRate ?? initialEngagement.targetRate)?.toFixed(2) || "0.00"}
                     </p>
                   </div>
                   <div>
@@ -440,7 +439,6 @@ export default function AuctionCard({
                 </div>
               )}
 
-            {/* Closed: final rate for bearer (non-matching) */}
             {engagement.status === "CLOSED" &&
               engagement.currentLiveRate != null &&
               userRole !== "BIDDER" &&
@@ -455,19 +453,17 @@ export default function AuctionCard({
                 </div>
               )}
 
-            {/* Closed: cancelled for bearer */}
             {engagement.status === "CANCELLED" && userRole === "BEARER" && (
               <div className="text-right">
                 <p className="text-[9px] text-red-400 uppercase tracking-widest font-bold">
                   Expected
                 </p>
                 <p className="text-lg text-red-300 font-bold">
-                  ${engagement.targetRate?.toFixed(2) || "0.00"}
+                  ${(engagement.targetRate ?? initialEngagement.targetRate)?.toFixed(2) || "0.00"}
                 </p>
               </div>
             )}
 
-            {/* Closed: winning rate for winner bidder */}
             {engagement.status === "CLOSED" &&
               engagement.currentLiveRate != null &&
               userRole === "BIDDER" &&
@@ -512,8 +508,7 @@ export default function AuctionCard({
               </span>
             </span>
           )}
-          {/* OPEN-auction scheduled times — show on the card header so bidders
-              can plan when to come back. Both fields independently optional. */}
+
           {isOpenFormat &&
             engagement.openStartTime &&
             engagement.status === "PENDING" && (
@@ -550,7 +545,6 @@ export default function AuctionCard({
 
       {expanded && engagement.id && (
         <div className="border-t border-white/10 bg-black/40 p-5 sm:p-7">
-          {/* Auction Details — always */}
           <div className="mb-6 p-5 bg-zinc-900/50 rounded-xl border border-white/10">
             <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-4 font-semibold">
               Auction Details

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import { Engagement, openAuctionAPI, engagementAPI, AuctionItem } from '@/lib/api';
@@ -37,12 +37,39 @@ interface OpenAuctionPanelProps {
   onStateChange?: () => void;
 }
 
-/**
- * Formats a UTC ISO LocalDateTime string ("2026-05-12T18:30:00.000") into a
- * user-readable string in the viewer's local zone. Backend stores these as
- * naive LocalDateTime but the frontend sends them already-converted-to-UTC,
- * so we re-append Z before parsing.
- */
+type OpenAuctionEvent =
+  | { type: 'SEAT_UPDATE'; seats: SeatInfo[] }
+  | {
+      type: 'ITEM_START';
+      itemId: number;
+      itemName: string;
+      startingPrice?: number;
+      sequenceOrder: number;
+      totalItems: number;
+      phase: ItemState['phase'];
+      deadlineEpochMs: number | null;
+      highestBid: number;
+    }
+  | {
+      type: 'ITEM_BID';
+      phase: ItemState['phase'];
+      deadlineEpochMs: number | null;
+      highestBid: number;
+      highestBidder: string | null;
+      reopenedFromFinale?: boolean;
+    }
+  | {
+      type: 'FINALE_TICK';
+      phase: ItemState['phase'];
+      highestBid: number;
+      highestBidder: string | null;
+      label: string;
+      countdown: number;
+    }
+  | { type: 'ITEM_SOLD'; itemName: string; soldPrice: number; winnerEmail: string }
+  | { type: 'ITEM_SKIPPED'; itemName: string }
+  | { type: 'AUCTION_ENDED'; reason?: string };
+
 function formatScheduledTime(iso: string | undefined): string | null {
   if (!iso) return null;
   try {
@@ -109,7 +136,10 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reopenedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onStateChangeRef = useRef(onStateChange);
-  onStateChangeRef.current = onStateChange;
+
+  useEffect(() => {
+    onStateChangeRef.current = onStateChange;
+  }, [onStateChange]);
 
   const isBearer = user?.role === 'BEARER';
   const isPending = engagement.status === 'PENDING';
@@ -118,7 +148,7 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
   const isCancelled = engagement.status === 'CANCELLED' || endReason === 'NO_PARTICIPANTS';
 
   // ----- seat loading -----
-  const refreshSeats = async () => {
+  const refreshSeats = useCallback(async () => {
     if (!engagement.id) return;
     try {
       const data = await openAuctionAPI.listSeats(engagement.id);
@@ -128,45 +158,36 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
         setMySeat(my ? my.seatIndex : null);
       }
     } catch {
-      // non-fatal
+
     }
-  };
+  }, [engagement, user]);
 
-  useEffect(() => {
-    refreshSeats();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engagement.id, user?.email]);
-
-  // ----- WebSocket -----
   useEffect(() => {
     if (!engagement.id) return;
-    const client = new Client({
-      webSocketFactory: () => new SockJS(`${WS_BASE}/ws-sockjs`),
-      reconnectDelay: 3000,
-      onConnect: () => {
-        client.subscribe(`/topic/engagements/${engagement.id}/open`, (msg) => {
-          const evt = JSON.parse(msg.body);
-          handleOpenEvent(evt);
-        });
-        client.subscribe(`/topic/engagements/${engagement.id}/status`, (msg) => {
-          const evt = JSON.parse(msg.body);
-          if (evt.status === 'PHASE_2_LIVE' || evt.status === 'CLOSED' || evt.status === 'CANCELLED') {
-            if (evt.reason) setEndReason(evt.reason);
-            onStateChangeRef.current?.();
-          }
-        });
-      },
-    });
-    client.activate();
-    return () => {
-      client.deactivate();
-      if (countdownRef.current) clearInterval(countdownRef.current);
-      if (reopenedTimeoutRef.current) clearTimeout(reopenedTimeoutRef.current);
+    const loadSeats = async () => {
+      await refreshSeats();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engagement.id]);
+    loadSeats();
+  }, [refreshSeats, engagement.id]);
 
-  const handleOpenEvent = (evt: any) => {
+  function startCountdown(deadlineEpochMs: number | null) {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    if (!deadlineEpochMs) {
+      setCountdown(null);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((deadlineEpochMs - Date.now()) / 1000));
+      setCountdown(remaining);
+      if (remaining === 0 && countdownRef.current) {
+        clearInterval(countdownRef.current);
+      }
+    };
+    tick();
+    countdownRef.current = setInterval(tick, 250);
+  }
+
+  const handleOpenEvent = useCallback((evt: OpenAuctionEvent) => {
     switch (evt.type) {
       case 'SEAT_UPDATE':
         setSeats(evt.seats);
@@ -259,24 +280,55 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
         onStateChangeRef.current?.();
         break;
     }
-  };
+  }, [user?.email]);
 
-  const startCountdown = (deadlineEpochMs: number | null) => {
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    if (!deadlineEpochMs) {
-      setCountdown(null);
-      return;
-    }
-    const tick = () => {
-      const remaining = Math.max(0, Math.ceil((deadlineEpochMs - Date.now()) / 1000));
-      setCountdown(remaining);
-      if (remaining === 0 && countdownRef.current) {
-        clearInterval(countdownRef.current);
+  // ----- WebSocket -----
+  useEffect(() => {
+    if (!engagement.id) return;
+    const client = new Client({
+      webSocketFactory: () => new SockJS(`${WS_BASE}/ws-sockjs`),
+      reconnectDelay: 3000,
+      onConnect: () => {
+        client.subscribe(`/topic/engagements/${engagement.id}/open`, (msg) => {
+          const evt = JSON.parse(msg.body) as OpenAuctionEvent;
+          handleOpenEvent(evt);
+        });
+        client.subscribe(`/topic/engagements/${engagement.id}/status`, (msg) => {
+          const evt = JSON.parse(msg.body) as { status: string; reason?: string };
+          if (evt.status === 'PHASE_2_LIVE' || evt.status === 'CLOSED' || evt.status === 'CANCELLED') {
+            if (evt.reason) setEndReason(evt.reason);
+            onStateChangeRef.current?.();
+          }
+        });
+      },
+    });
+    client.activate();
+    return () => {
+      client.deactivate();
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      if (reopenedTimeoutRef.current) clearTimeout(reopenedTimeoutRef.current);
+    };
+  }, [engagement.id, handleOpenEvent]);
+
+  useEffect(() => {
+    if (!isClosed || !engagement.id || !user?.email || user.role !== 'BIDDER') return;
+    if (wonItems !== null) return; // already loaded
+
+    const engagementId = engagement.id;
+    const loadWonItems = async () => {
+      setLoadingWon(true);
+      try {
+        const items = await openAuctionAPI.listWon(engagementId, user.email);
+        setWonItems(items);
+      } catch {
+        setWonItems([]);
+      } finally {
+        setLoadingWon(false);
       }
     };
-    tick();
-    countdownRef.current = setInterval(tick, 250);
-  };
+
+    loadWonItems();
+  }, [isClosed, engagement.id, user?.email, user?.role, wonItems]);
 
   // ----- seat claim -----
   const handleClaimSeat = async (seatIndex: number) => {
@@ -415,11 +467,21 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
   useEffect(() => {
     if (!isClosed || !engagement.id || !user?.email || user.role !== 'BIDDER') return;
     if (wonItems !== null) return; // already loaded
-    setLoadingWon(true);
-    openAuctionAPI.listWon(engagement.id, user.email)
-      .then(items => setWonItems(items))
-      .catch(() => setWonItems([]))
-      .finally(() => setLoadingWon(false));
+
+    const engagementId = engagement.id;
+    const loadWonItems = async () => {
+      setLoadingWon(true);
+      try {
+        const items = await openAuctionAPI.listWon(engagementId, user.email);
+        setWonItems(items);
+      } catch {
+        setWonItems([]);
+      } finally {
+        setLoadingWon(false);
+      }
+    };
+
+    loadWonItems();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isClosed, engagement.id, user?.email, user?.role]);
 
@@ -428,13 +490,22 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
   useEffect(() => {
     if (!isClosed || !engagement.id || !user?.email || user.role !== 'BEARER') return;
     if (allItems !== null) return;
-    setLoadingAllItems(true);
-    openAuctionAPI.listItems(engagement.id)
-      .then(items => setAllItems(items))
-      .catch(() => setAllItems([]))
-      .finally(() => setLoadingAllItems(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isClosed, engagement.id, user?.email, user?.role]);
+
+    const engagementId = engagement.id;
+    const loadAllItems = async () => {
+      setLoadingAllItems(true);
+      try {
+        const items = await openAuctionAPI.listItems(engagementId);
+        setAllItems(items);
+      } catch {
+        setAllItems([]);
+      } finally {
+        setLoadingAllItems(false);
+      }
+    };
+
+    loadAllItems();
+  }, [isClosed, engagement.id, user?.email, user?.role, allItems]);
 
   // Group SOLD items by winner email for the bearer's summary block.
   const bidderGroups = (() => {
@@ -599,8 +670,6 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
             {renderSeatGrid()}
           </div>
 
-          {/* Catalog download — visible to anyone (bearer or bidder) during PENDING.
-              Includes item names, optional descriptions, and starting prices. */}
           <div className="text-center">
             <button
               onClick={handleDownloadCatalog}
@@ -884,7 +953,6 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
             </p>
           </div>
 
-          {/* Bidder's personal won-items summary */}
           {user?.role === 'BIDDER' && (
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
               <p className="text-[10px] uppercase tracking-widest text-emerald-400 font-bold mb-3">
@@ -924,8 +992,6 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
             </div>
           )}
 
-          {/* Bearer-only "Bidder Results" — grouped summary + flat list of all
-              SOLD items. Bidders don't see this; they get their own panel above. */}
           {user?.role === 'BEARER' && (
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
               <p className="text-[10px] uppercase tracking-widest text-amber-400 font-bold mb-3">
@@ -937,7 +1003,6 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
                 <p className="text-zinc-500 text-sm">No items.</p>
               ) : (
                 <>
-                  {/* Top-line stats */}
                   <div className="grid grid-cols-3 gap-3 mb-4">
                     <div className="rounded-lg bg-black/30 border border-white/5 p-3">
                       <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">
@@ -965,7 +1030,6 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
                     </div>
                   </div>
 
-                  {/* Grouped by bidder */}
                   {bidderGroups && bidderGroups.length > 0 ? (
                     <div className="mb-5">
                       <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2">
@@ -1007,8 +1071,6 @@ export default function OpenAuctionPanel({ engagement, onStateChange }: OpenAuct
                     <p className="text-zinc-500 text-sm mb-5">No items were sold.</p>
                   )}
 
-                  {/* Flat per-item table — includes skipped ones too for the
-                      auctioneer's records. */}
                   <div>
                     <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2">
                       All Items
