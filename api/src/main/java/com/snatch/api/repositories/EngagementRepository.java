@@ -22,4 +22,26 @@ public interface EngagementRepository extends JpaRepository<Engagement, Long> {
     List<Engagement> findByStatus(Engagement.AuctionStatus status);
     List<Engagement> findAllByOrderByIdDesc();
     List<Engagement> findByStatusOrderByIdDesc(Engagement.AuctionStatus status);
+
+    @Query("SELECT e FROM Engagement e WHERE e.bearer.email = :email ORDER BY e.id DESC")
+    List<Engagement> findMyAuctionsAsBearer(@Param("email") String email);
+
+    // A bidder is associated with an engagement if:
+    //   (a) they submitted at least one Phase 1 sealed bid (CLOSED auctions), OR
+    //   (b) they won at least one item (OPEN auctions — no Phase 1 happens).
+    @Query("SELECT DISTINCT e FROM Engagement e WHERE e.id IN (" +
+           "  SELECT s.engagement.id FROM Submission s " +
+           "  WHERE s.providerId = :providerId AND s.phase = com.snatch.api.models.Submission.SubmissionPhase.PHASE_1" +
+           ") OR e.id IN (" +
+           "  SELECT i.engagement.id FROM AuctionItem i WHERE i.winnerId = :providerId" +
+           ") ORDER BY e.id DESC")
+    List<Engagement> findMyAuctionsAsBidder(@Param("providerId") String providerId);
+
+    // OPEN auctions where the bidder won at least one item — different shape
+    // from CLOSED because OPEN auctions never have an engagement-level winnerId.
+    @Query("SELECT DISTINCT e FROM Engagement e " +
+           "JOIN AuctionItem i ON i.engagement.id = e.id " +
+           "WHERE i.winnerId = :providerId " +
+           "ORDER BY e.id DESC")
+    List<Engagement> findOpenAuctionsWithItemsWonBy(@Param("providerId") String providerId);
 }

@@ -21,6 +21,7 @@ public class SubmissionController {
 
     private final AuctionEngine descendingEngine;
     private final AuctionEngine ascendingEngine;
+    private final AuctionEngine openAscendingEngine;
     private final com.snatch.api.repositories.EngagementRepository engagementRepository;
     private final com.snatch.api.repositories.SubmissionRepository submissionRepository;
     private final com.snatch.api.repositories.RegistrationRepository registrationRepository;
@@ -28,24 +29,34 @@ public class SubmissionController {
     public SubmissionController(
             @Qualifier("descendingEngine") AuctionEngine descendingEngine,
             @Qualifier("ascendingEngine") AuctionEngine ascendingEngine,
+            @Qualifier("openAscendingEngine") AuctionEngine openAscendingEngine,
             com.snatch.api.repositories.EngagementRepository engagementRepository,
             com.snatch.api.repositories.SubmissionRepository submissionRepository,
             com.snatch.api.repositories.RegistrationRepository registrationRepository) {
         this.descendingEngine = descendingEngine;
         this.ascendingEngine = ascendingEngine;
+        this.openAscendingEngine = openAscendingEngine;
         this.engagementRepository = engagementRepository;
         this.submissionRepository = submissionRepository;
         this.registrationRepository = registrationRepository;
     }
-    
+
+    /**
+     * Picks the engine based on auctionType and auctionFormat:
+     *   DESCENDING                           → descendingEngine
+     *   ASCENDING + format=OPEN              → openAscendingEngine
+     *   ASCENDING + format=CLOSED (or null)  → ascendingEngine
+     */
     private AuctionEngine getEngineForEngagement(Long engagementId) {
         Engagement engagement = engagementRepository.findById(engagementId)
                 .orElseThrow(() -> new IllegalArgumentException("Engagement not found."));
         if ("DESCENDING".equalsIgnoreCase(engagement.getAuctionType())) {
             return descendingEngine;
-        } else {
-            return ascendingEngine;
         }
+        if ("OPEN".equalsIgnoreCase(engagement.getAuctionFormat())) {
+            return openAscendingEngine;
+        }
+        return ascendingEngine;
     }
 
     @PostMapping("/{id}/register")
