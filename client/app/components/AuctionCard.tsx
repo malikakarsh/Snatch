@@ -224,13 +224,13 @@ export default function AuctionCard({ engagement: initialEngagement, onStateChan
                 <div>
                   <p className="text-[9px] text-zinc-400 uppercase tracking-widest font-bold">Final / Status</p>
                   <p className={`text-lg font-bold ${
-                    engagement.currentLiveRate >= engagement.targetRate!
+                    engagement.winnerId
                       ? 'text-emerald-400'
                       : 'text-red-400'
                   }`}>
                     ${engagement.currentLiveRate.toFixed(2)} 
                     <span className="text-xs ml-1">
-                      {engagement.currentLiveRate >= engagement.targetRate! ? '✓ Sold' : '✗ Below'}
+                      {engagement.winnerId ? '✓ Sold' : '✗ Below'}
                     </span>
                   </p>
                 </div>
