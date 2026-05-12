@@ -7,7 +7,7 @@ A real-time, multi-phase auction platform supporting descending (Dutch) and asce
 ## Contributors
 
 - Akarsh Malik
-- Hashmath Sheikh
+- Hashmmath Shaik
 ---
 
 ![](./images/auctioneer_dashboard.png)
