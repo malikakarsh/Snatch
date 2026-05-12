@@ -10,23 +10,13 @@ A real-time, multi-phase auction platform supporting descending (Dutch) and asce
 - Hashmmath Shaik
 ---
 
-![](./images/auctioneer_dashboard.png)
-
-![](./images/create_auction_form.png)
-
-![](./images/bidder_dashboard.png)
-
-![](./images/register_for_descending.png)
-
-![](./images/register_ascending.png)
-
-![](./images/place_bid_ascending_closed.png)
-
-![](./images/ascending_acutions_open.png)
-
-![](./images/ascending_auctions_live_bidding.png)
-
-![](./images/auctions_won_tab.png)
+| | |
+|---|---|
+| ![](./images/signup.png) | ![](./images/auctioneer_dashboard.png) |
+| ![](./images/create_auction_form.png) | ![](./images/bidder_dashboard.png) |
+| ![](./images/register_for_descending.png) | ![](./images/register_ascending.png) |
+| ![](./images/place_bid_ascending_closed.png) | ![](./images/ascending_acutions_open.png) |
+| ![](./images/ascending_auctions_live_bidding.png) | ![](./images/auctions_won_tab.png) |
 
 ## System Architecture
 
