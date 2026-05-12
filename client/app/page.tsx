@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, startTransition, useCallback } from 'react';
 import AuctionForm from './components/AuctionForm';
 import AuctionCard from './components/AuctionCard';
 import { Engagement, engagementAPI, favoritesAPI } from '@/lib/api';
@@ -31,85 +31,98 @@ export default function Home() {
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        setEngagements(data);
+        startTransition(() => setEngagements(data));
       } else {
-        setError('Failed to fetch auctions.');
+        startTransition(() => setError('Failed to fetch auctions.'));
       }
     } catch {
-      if (isInitialLoad) setError('Cannot reach the server. Is the backend running?');
+      startTransition(() => {
+        if (isInitialLoad) setError('Cannot reach the server. Is the backend running?');
+      });
     } finally {
-      if (isInitialLoad) setLoading(false);
+      startTransition(() => {
+        if (isInitialLoad) setLoading(false);
+      });
     }
   };
 
-  const fetchMyAuctions = async () => {
+  const fetchMyAuctions = useCallback(async () => {
     if (!user?.email || !user?.role) {
-      setMyAuctions([]);
+      startTransition(() => setMyAuctions([]));
       return;
     }
     try {
       const data = await engagementAPI.getMyAuctions(user.email, user.role);
-      setMyAuctions(data);
+      startTransition(() => setMyAuctions(data));
     } catch {
-      setMyAuctions([]);
+      startTransition(() => setMyAuctions([]));
     }
-  };
+  }, [user]);
 
-  const fetchFavorites = async () => {
+  const fetchFavorites = useCallback(async () => {
     if (!user?.email) {
-      setFavorites([]);
-      setFavoriteIds(new Set());
+      startTransition(() => {
+        setFavorites([]);
+        setFavoriteIds(new Set());
+      });
       return;
     }
     try {
       const data = await favoritesAPI.list(user.email);
-      setFavorites(data);
-      setFavoriteIds(new Set(data.map(e => e.id!).filter(Boolean)));
+      startTransition(() => {
+        setFavorites(data);
+        setFavoriteIds(new Set(data.map(e => e.id!).filter(Boolean)));
+      });
     } catch {
-      setFavorites([]);
-      setFavoriteIds(new Set());
+      startTransition(() => {
+        setFavorites([]);
+        setFavoriteIds(new Set());
+      });
     }
-  };
-
-  useEffect(() => {
-    fetchEngagements(true);
-    fetchMyAuctions();
-    fetchFavorites();
-    const poll = setInterval(() => {
-      fetchEngagements(false).catch(() => {});
-      fetchMyAuctions().catch(() => {});
-      fetchFavorites().catch(() => {});
-    }, 5000);
-    return () => clearInterval(poll);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  useEffect(() => {
+    startTransition(() => {
+      fetchEngagements(true);
+      fetchMyAuctions();
+      fetchFavorites();
+    });
+    const poll = setInterval(() => {
+      startTransition(() => {
+        fetchEngagements(false).catch(() => {});
+        fetchMyAuctions().catch(() => {});
+        fetchFavorites().catch(() => {});
+      });
+    }, 5000);
+    return () => clearInterval(poll);
+  }, [user, fetchMyAuctions, fetchFavorites]);
+
   const handleAuctionCreated = (newEngagement: Engagement) => {
-    setEngagements((prev) => [newEngagement, ...prev]);
+    startTransition(() => setEngagements((prev) => [newEngagement, ...prev]));
     fetchMyAuctions();
     setShowForm(false);
     setActiveTab('active');
   };
 
-  // Optimistic update from AuctionCard so the Favorites tab and star icons
-  // update instantly without waiting for the next poll.
   const handleFavoriteChange = (engagementId: number, nowFavorited: boolean) => {
-    setFavoriteIds(prev => {
-      const next = new Set(prev);
-      if (nowFavorited) next.add(engagementId);
-      else next.delete(engagementId);
-      return next;
-    });
-    if (nowFavorited) {
-      // Find the engagement (may live in any list) and prepend it to favorites
-      const all = [...engagements, ...myAuctions];
-      const found = all.find(e => e.id === engagementId);
-      if (found) {
-        setFavorites(prev => [found, ...prev.filter(e => e.id !== engagementId)]);
+    startTransition(() => {
+      setFavoriteIds(prev => {
+        const next = new Set(prev);
+        if (nowFavorited) next.add(engagementId);
+        else next.delete(engagementId);
+        return next;
+      });
+      if (nowFavorited) {
+        // Find the engagement (may live in any list) and prepend it to favorites
+        const all = [...engagements, ...myAuctions];
+        const found = all.find(e => e.id === engagementId);
+        if (found) {
+          setFavorites(prev => [found, ...prev.filter(e => e.id !== engagementId)]);
+        }
+      } else {
+        setFavorites(prev => prev.filter(e => e.id !== engagementId));
       }
-    } else {
-      setFavorites(prev => prev.filter(e => e.id !== engagementId));
-    }
+    });
     // Reconcile with the server on the next poll cycle anyway.
     fetchFavorites();
   };
@@ -118,7 +131,7 @@ export default function Home() {
   const completedEngagements = engagements.filter(e => e.status === 'CLOSED' || e.status === 'CANCELLED');
 
   const displayCompleted = user?.role === 'BIDDER'
-    ? completedEngagements.filter(e => e.winnerId === user.email)
+    ? myAuctions.filter(e => e.auctionFormat === 'OPEN' || ((e.status === 'CLOSED' || e.status === 'CANCELLED') && e.winnerId === user.email))
     : completedEngagements;
 
   const currentEngagements =

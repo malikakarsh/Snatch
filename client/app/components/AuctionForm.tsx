@@ -52,11 +52,6 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
     reader.readAsText(file);
   };
 
-  // Special-case handler for the Auction Type select. When the user flips
-  // from Ascending to Descending, the previously-chosen auctionFormat="OPEN"
-  // would otherwise stick around in state and trip the submit-time validation
-  // ("OPEN is only available for ASCENDING auctions"). Force CLOSED on every
-  // Descending switch so the format is always consistent with the type.
   const handleAuctionTypeChange = (
     e: React.ChangeEvent<HTMLSelectElement>,
   ) => {
@@ -412,7 +407,7 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
                 Max Starting Rate ($) *
               </label>
               <p className="text-xs text-zinc-500 mb-2">
-                Ceiling price — Phase 2 opens here.
+                Ceiling price - Phase 2 opens here.
               </p>
               <input
                 type="number"
@@ -631,7 +626,7 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
               <span className="text-amber-400">
                 Every item needs a starting price
               </span>{" "}
-              — the live auction can&apos;t open at zero. Lines starting with #
+              - the live auction can&apos;t open at zero. Lines starting with #
               are ignored.
             </p>
             <p className="text-xs text-zinc-500 mb-2">
