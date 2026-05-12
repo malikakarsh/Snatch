@@ -17,4 +17,6 @@ public interface RegistrationRepository extends JpaRepository<Registration, Long
     // Returns all engagements a bidder has registered for (participated in), newest first.
     @Query("SELECT r.engagement FROM Registration r WHERE r.providerId = :providerId ORDER BY r.engagement.id DESC")
     List<Engagement> findEngagementsByProviderId(@Param("providerId") String providerId);
+
+    List<Registration> findByEngagementIdAndWithdrawnFalse(Long engagementId);
 }

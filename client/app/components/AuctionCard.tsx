@@ -23,7 +23,9 @@ function getStatusLabel(engagement: Engagement): string {
   const now = new Date();
   switch (engagement.status) {
     case "PENDING":
-      return engagement.auctionFormat === "OPEN" ? "Seating" : "Starting Soon";
+      if (engagement.auctionFormat === "OPEN") return "Seating";
+      if (engagement.auctionType === "ASCENDING") return "Registering";
+      return "Starting Soon";
     case "PHASE_1_SEALED": {
       const p1End = engagement.phase1EndTime
         ? new Date(
@@ -36,9 +38,9 @@ function getStatusLabel(engagement: Engagement): string {
       return "Phase 1 Live";
     }
     case "PHASE_2_LIVE":
-      return engagement.auctionFormat === "OPEN"
-        ? "Live Auction"
-        : "Phase 2 Live";
+      if (engagement.auctionFormat === "OPEN") return "Live Auction";
+      if (engagement.auctionType === "ASCENDING") return "Live Bidding";
+      return "Phase 2 Live";
     case "CLOSED":
       return "Closed";
     case "CANCELLED":
@@ -287,7 +289,11 @@ export default function AuctionCard({
     engagement.status === "PENDING" || engagement.status === "PHASE_1_SEALED";
   const isPhase2 = engagement.status === "PHASE_2_LIVE";
   const phase1PriceLabel =
-    engagement.auctionType === "DESCENDING" ? "Target Price" : "Expected";
+    engagement.auctionType === "DESCENDING"
+      ? "Target Price"
+      : engagement.auctionFormat !== "OPEN"
+        ? "Min. Bid"
+        : "Expected";
   const phase1Price =
     engagement.targetRate ?? initialEngagement.targetRate ?? undefined;
 
@@ -492,41 +498,46 @@ export default function AuctionCard({
                 ? "🎪 Open English"
                 : "🔺 English"}
           </span>
-          {!isOpenFormat && engagement.phase1EndTime && isPhase1 && (
-            <span className="text-[10px] text-zinc-500">
-              Accepting bids till{" "}
-              <span className="text-zinc-300">
-                {formatTime(engagement.phase1EndTime)}
+          {!isOpenFormat &&
+            engagement.auctionType === "ASCENDING" &&
+            engagement.phase2StartTime &&
+            (isPhase1 || engagement.status === "PENDING") && (
+              <span className="text-[10px] text-zinc-500">
+                Starts{" "}
+                <span className="text-zinc-300">
+                  {formatTime(engagement.phase2StartTime)}
+                </span>
               </span>
-            </span>
-          )}
-          {!isOpenFormat && engagement.phase2StartTime && (
-            <span className="text-[10px] text-zinc-500">
-              Phase 2 starts{" "}
-              <span className="text-zinc-300">
-                {formatTime(engagement.phase2StartTime)}
+            )}
+          {!isOpenFormat &&
+            engagement.auctionType === "DESCENDING" &&
+            engagement.phase1EndTime &&
+            isPhase1 && (
+              <span className="text-[10px] text-zinc-500">
+                Accepting bids till{" "}
+                <span className="text-zinc-300">
+                  {formatTime(engagement.phase1EndTime)}
+                </span>
               </span>
-            </span>
-          )}
+            )}
+          {!isOpenFormat &&
+            engagement.auctionType === "DESCENDING" &&
+            engagement.phase2StartTime && (
+              <span className="text-[10px] text-zinc-500">
+                Phase 2 starts{" "}
+                <span className="text-zinc-300">
+                  {formatTime(engagement.phase2StartTime)}
+                </span>
+              </span>
+            )}
 
           {isOpenFormat &&
             engagement.openStartTime &&
             engagement.status === "PENDING" && (
               <span className="text-[10px] text-zinc-500">
-                Auto-starts{" "}
+                Registration closes{" "}
                 <span className="text-zinc-300">
                   {formatLocalTime(engagement.openStartTime)}
-                </span>
-              </span>
-            )}
-          {isOpenFormat &&
-            engagement.openEndTime &&
-            engagement.status !== "CLOSED" &&
-            engagement.status !== "CANCELLED" && (
-              <span className="text-[10px] text-zinc-500">
-                Ends{" "}
-                <span className="text-zinc-300">
-                  {formatLocalTime(engagement.openEndTime)}
                 </span>
               </span>
             )}
@@ -595,43 +606,49 @@ export default function AuctionCard({
                   </p>
                 </div>
               )}
-              {!isOpenFormat && engagement.phase1EndTime && (
-                <div>
-                  <span className="text-zinc-500 block mb-1 text-xs">
-                    Accepting Bids Till
-                  </span>
-                  <p className="text-zinc-300 text-sm">
-                    {formatTime(engagement.phase1EndTime)}
-                  </p>
-                </div>
-              )}
-              {!isOpenFormat && engagement.phase2StartTime && (
-                <div>
-                  <span className="text-zinc-500 block mb-1 text-xs">
-                    Phase 2 Start
-                  </span>
-                  <p className="text-zinc-300 text-sm">
-                    {formatTime(engagement.phase2StartTime)}
-                  </p>
-                </div>
-              )}
+              {!isOpenFormat &&
+                engagement.auctionType === "ASCENDING" &&
+                engagement.phase2StartTime && (
+                  <div>
+                    <span className="text-zinc-500 block mb-1 text-xs">
+                      Auction Start
+                    </span>
+                    <p className="text-zinc-300 text-sm">
+                      {formatTime(engagement.phase2StartTime)}
+                    </p>
+                  </div>
+                )}
+              {!isOpenFormat &&
+                engagement.auctionType === "DESCENDING" &&
+                engagement.phase1EndTime && (
+                  <div>
+                    <span className="text-zinc-500 block mb-1 text-xs">
+                      Accepting Bids Till
+                    </span>
+                    <p className="text-zinc-300 text-sm">
+                      {formatTime(engagement.phase1EndTime)}
+                    </p>
+                  </div>
+                )}
+              {!isOpenFormat &&
+                engagement.auctionType === "DESCENDING" &&
+                engagement.phase2StartTime && (
+                  <div>
+                    <span className="text-zinc-500 block mb-1 text-xs">
+                      Phase 2 Start
+                    </span>
+                    <p className="text-zinc-300 text-sm">
+                      {formatTime(engagement.phase2StartTime)}
+                    </p>
+                  </div>
+                )}
               {isOpenFormat && engagement.openStartTime && (
                 <div>
                   <span className="text-zinc-500 block mb-1 text-xs">
-                    Auto-Start Time
+                    Registration Deadline
                   </span>
                   <p className="text-zinc-300 text-sm">
                     {formatLocalTime(engagement.openStartTime)}
-                  </p>
-                </div>
-              )}
-              {isOpenFormat && engagement.openEndTime && (
-                <div>
-                  <span className="text-zinc-500 block mb-1 text-xs">
-                    Scheduled End
-                  </span>
-                  <p className="text-zinc-300 text-sm">
-                    {formatLocalTime(engagement.openEndTime)}
                   </p>
                 </div>
               )}
@@ -687,7 +704,9 @@ export default function AuctionCard({
                   engagementId={engagement.id}
                   status={engagement.status}
                   auctionType={engagement.auctionType}
+                  auctionFormat={engagement.auctionFormat}
                   currentLiveRate={engagement.currentLiveRate}
+                  targetRate={engagement.targetRate ?? initialEngagement.targetRate}
                   bidWindowOpen={bidWindowOpen}
                   winnerId={engagement.winnerId}
                   onSuccess={() => onStateChangeRef.current?.()}

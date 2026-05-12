@@ -59,13 +59,19 @@ public class AuctionScheduler {
                     continue;
                 }
 
-                // CLOSED-format auctions: existing two-phase auto-transition.
-                if (engagement.getStatus() == Engagement.AuctionStatus.PHASE_1_SEALED
+                // CLOSED-format auctions.
+                // DESCENDING: PHASE_1_SEALED → PHASE_2_LIVE.
+                // ASCENDING CLOSED: single phase, PENDING → PHASE_2_LIVE.
+                boolean isClosedAscending = "ASCENDING".equalsIgnoreCase(engagement.getAuctionType());
+                boolean readyToStart =
+                        (engagement.getStatus() == Engagement.AuctionStatus.PHASE_1_SEALED
+                                || (isClosedAscending && engagement.getStatus() == Engagement.AuctionStatus.PENDING))
                         && engagement.getPhase2StartTime() != null
-                        && now.isAfter(engagement.getPhase2StartTime())) {
+                        && now.isAfter(engagement.getPhase2StartTime());
 
+                if (readyToStart) {
                     System.out.println("Auto-transitioning Engagement " + engagement.getId()
-                            + " to Phase 2 Live Round.");
+                            + " to live round.");
                     if ("DESCENDING".equalsIgnoreCase(engagement.getAuctionType())) {
                         descendingEngine.transitionToLiveRound(engagement.getId());
                     } else {

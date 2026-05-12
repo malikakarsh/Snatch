@@ -27,13 +27,16 @@ public interface EngagementRepository extends JpaRepository<Engagement, Long> {
     List<Engagement> findMyAuctionsAsBearer(@Param("email") String email);
 
     // A bidder is associated with an engagement if:
-    //   (a) they submitted at least one Phase 1 sealed bid (CLOSED auctions), OR
-    //   (b) they won at least one item (OPEN auctions — no Phase 1 happens).
+    //   (a) they submitted at least one Phase 1 sealed bid (CLOSED DESCENDING auctions), OR
+    //   (b) they won at least one item (OPEN auctions — no Phase 1 happens), OR
+    //   (c) they registered for a CLOSED ASCENDING auction.
     @Query("SELECT DISTINCT e FROM Engagement e WHERE e.id IN (" +
            "  SELECT s.engagement.id FROM Submission s " +
            "  WHERE s.providerId = :providerId AND s.phase = com.snatch.api.models.Submission.SubmissionPhase.PHASE_1" +
            ") OR e.id IN (" +
            "  SELECT i.engagement.id FROM AuctionItem i WHERE i.winnerId = :providerId" +
+           ") OR e.id IN (" +
+           "  SELECT r.engagement.id FROM Registration r WHERE r.providerId = :providerId AND r.withdrawn = false" +
            ") ORDER BY e.id DESC")
     List<Engagement> findMyAuctionsAsBidder(@Param("providerId") String providerId);
 

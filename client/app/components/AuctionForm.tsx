@@ -20,17 +20,19 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
     auctionFormat: "CLOSED" as "CLOSED" | "OPEN",
     targetRate: "",
     maxStartingRate: "",
+    liveStartTime: "",
     phase1EndTime: "",
     phase2DelaySeconds: "0",
     phase2TimerDuration: "30",
     openStartTime: "",
-    openEndTime: "",
     graceSeconds: "10",
     itemsText: "",
   });
 
   const isOpenAscending =
     formData.auctionType === "ASCENDING" && formData.auctionFormat === "OPEN";
+  const isClosedAscending =
+    formData.auctionType === "ASCENDING" && formData.auctionFormat === "CLOSED";
 
   const handleChange = (
     e: React.ChangeEvent<
@@ -101,23 +103,40 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
         );
         return;
       }
-    } else if (
-      formData.auctionType === "ASCENDING" &&
-      formData.auctionFormat === "CLOSED"
-    ) {
+    } else if (isClosedAscending) {
       if (!formData.targetRate || isNaN(targetRate) || targetRate <= 0) {
-        setError("Target Reserve Price must be greater than zero.");
+        setError("Target Price must be greater than zero.");
         return;
       }
     }
 
-    if (!isOpenAscending) {
+    if (isClosedAscending) {
+      if (!formData.liveStartTime) {
+        setError("Auction Start Time is required.");
+        return;
+      }
+      if (new Date(formData.liveStartTime).getTime() < Date.now() - 60_000) {
+        setError("Start time is in the past. Pick a future time.");
+        return;
+      }
+    }
+
+    if (formData.auctionType === "DESCENDING") {
       if (!formData.phase1EndTime) {
         setError("Phase 1 End Time is required.");
         return;
       }
-    } else {
-      // OPEN ascending validation
+      const phase2DelaySeconds =
+        formData.phase2DelaySeconds.trim() === ""
+          ? 0
+          : parseInt(formData.phase2DelaySeconds, 10);
+      if (isNaN(phase2DelaySeconds) || phase2DelaySeconds < 0) {
+        setError("Phase 2 delay must be zero or a positive number of seconds.");
+        return;
+      }
+    }
+
+    if (isOpenAscending) {
       const rawLines = formData.itemsText.split(/\r?\n/);
       const nonComment: { lineNumber: number; text: string }[] = [];
       rawLines.forEach((raw, i) => {
@@ -167,14 +186,6 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
         }
       }
 
-      if (formData.openStartTime && formData.openEndTime) {
-        const start = new Date(formData.openStartTime);
-        const end = new Date(formData.openEndTime);
-        if (end <= start) {
-          setError("Open auction end time must be after the start time.");
-          return;
-        }
-      }
       if (formData.openStartTime) {
         const start = new Date(formData.openStartTime);
         if (start.getTime() < Date.now() - 60_000) {
@@ -192,31 +203,29 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
       }
     }
 
-    const phase2DelaySeconds =
-      formData.phase2DelaySeconds.trim() === ""
-        ? 0
-        : parseInt(formData.phase2DelaySeconds, 10);
-
-    if (!isOpenAscending) {
-      if (isNaN(phase2DelaySeconds) || phase2DelaySeconds < 0) {
-        setError("Phase 2 delay must be zero or a positive number of seconds.");
-        return;
-      }
-
-      const p1End = new Date(formData.phase1EndTime);
-      const phase2Start = new Date(p1End.getTime() + phase2DelaySeconds * 1000);
-      if (phase2Start < p1End) {
-        setError("Phase 2 Start Time could not be computed.");
-        return;
-      }
-    }
-
     setLoading(true);
     try {
       let payload: Engagement;
 
-      if (!isOpenAscending) {
+      if (isClosedAscending) {
+        payload = {
+          title: formData.title,
+          description: formData.description,
+          auctioneerName: formData.auctioneerName.trim() || null,
+          auctionType: formData.auctionType,
+          auctionFormat: formData.auctionFormat,
+          targetRate: isNaN(targetRate) ? 0 : targetRate,
+          maxStartingRate: 0,
+          phase2StartTime: toUtcNaive(formData.liveStartTime),
+          phase2TimerDuration: parseInt(formData.phase2TimerDuration, 10) || 30,
+          bearerEmailInput: user.email,
+        };
+      } else if (!isOpenAscending) {
         const p1End = new Date(formData.phase1EndTime);
+        const phase2DelaySeconds =
+          formData.phase2DelaySeconds.trim() === ""
+            ? 0
+            : parseInt(formData.phase2DelaySeconds, 10);
         const phase2Start = new Date(
           p1End.getTime() + phase2DelaySeconds * 1000,
         );
@@ -250,9 +259,6 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
         if (formData.openStartTime) {
           payload.openStartTime = toUtcNaive(formData.openStartTime);
         }
-        if (formData.openEndTime) {
-          payload.openEndTime = toUtcNaive(formData.openEndTime);
-        }
         payload.graceSeconds = parseInt(formData.graceSeconds, 10);
       }
 
@@ -272,11 +278,11 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
         auctionFormat: "CLOSED",
         targetRate: "",
         maxStartingRate: "",
+        liveStartTime: "",
         phase1EndTime: "",
         phase2DelaySeconds: "0",
         phase2TimerDuration: "30",
         openStartTime: "",
-        openEndTime: "",
         graceSeconds: "10",
         itemsText: "",
       });
@@ -376,7 +382,7 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
               >
                 <div className="text-sm font-semibold mb-1">🔒 Closed</div>
                 <p className="text-xs text-zinc-500">
-                  Sealed Phase 1 → live Phase 2 with rounds. Single deliverable.
+                  Register → live bidding rounds. Bidders quit until one remains.
                 </p>
               </button>
               <button
@@ -440,28 +446,26 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
           </div>
         )}
 
-        {formData.auctionType === "ASCENDING" &&
-          formData.auctionFormat === "CLOSED" && (
-            <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-2 uppercase tracking-widest">
-                Target Reserve Price ($) *
-              </label>
-              <p className="text-xs text-zinc-500 mb-2">
-                Minimum price that must be reached. If no bid meets this,
-                auction is cancelled.
-              </p>
-              <input
-                type="number"
-                name="targetRate"
-                value={formData.targetRate}
-                onChange={handleChange}
-                step="0.01"
-                min="0.01"
-                className="w-full px-4 py-3 bg-black/50 border border-white/10 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-white/30 transition-colors"
-                placeholder="500.00"
-              />
-            </div>
-          )}
+        {isClosedAscending && (
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-2 uppercase tracking-widest">
+              Target Price ($) *
+            </label>
+            <p className="text-xs text-zinc-500 mb-2">
+              Minimum bid amount. Bidders cannot place a bid below this value.
+            </p>
+            <input
+              type="number"
+              name="targetRate"
+              value={formData.targetRate}
+              onChange={handleChange}
+              step="0.01"
+              min="0.01"
+              className="w-full px-4 py-3 bg-black/50 border border-white/10 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-white/30 transition-colors"
+              placeholder="500.00"
+            />
+          </div>
+        )}
 
         {/* OPEN auctions: optional schedule + grace */}
         {isOpenAscending && (
@@ -481,7 +485,7 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
               <div>
                 <label className="block text-xs font-medium text-zinc-400 mb-2 uppercase tracking-widest">
-                  Auto-Start Time
+                  Registration Deadline
                 </label>
                 <input
                   type="datetime-local"
@@ -491,23 +495,7 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
                   className="w-full px-4 py-3 bg-zinc-800 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-colors [color-scheme:dark]"
                 />
                 <p className="text-xs text-zinc-500 mt-1">
-                  Leave blank to start manually.
-                </p>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-2 uppercase tracking-widest">
-                  Scheduled End Time
-                </label>
-                <input
-                  type="datetime-local"
-                  name="openEndTime"
-                  value={formData.openEndTime}
-                  onChange={handleChange}
-                  className="w-full px-4 py-3 bg-zinc-800 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-colors [color-scheme:dark]"
-                />
-                <p className="text-xs text-zinc-500 mt-1">
-                  Informational only — auction runs until items exhausted or
-                  stopped manually.
+                  Bidding starts at this time. No new bidders can join after this. Leave blank to start manually.
                 </p>
               </div>
             </div>
@@ -534,8 +522,30 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
             </div>
           </div>
         )}
-        {/* Times (CLOSED auctions only — OPEN auctions don't have Phase 1/Phase 2) */}
-        {!isOpenAscending && (
+
+        {/* Auction Start Time for ASCENDING CLOSED (single phase) */}
+        {isClosedAscending && (
+          <div className="flex flex-col gap-2">
+            <label className="block text-xs font-medium text-zinc-400 uppercase tracking-widest">
+              Auction Start Time *
+            </label>
+            <p className="text-xs text-zinc-500">
+              When the live bidding round opens. Registered bidders can place
+              bids from this moment.
+            </p>
+            <input
+              type="datetime-local"
+              name="liveStartTime"
+              value={formData.liveStartTime}
+              onChange={handleChange}
+              required
+              className="w-full px-4 py-3 bg-zinc-800 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-colors [color-scheme:dark]"
+            />
+          </div>
+        )}
+
+        {/* Phase 1/2 times for DESCENDING only */}
+        {formData.auctionType === "DESCENDING" && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div className="flex flex-col gap-2">
               <label className="block text-xs font-medium text-zinc-400 uppercase tracking-widest">
@@ -604,8 +614,9 @@ export default function AuctionForm({ onSuccess }: AuctionFormProps) {
               placeholder="30"
             />
             <p className="text-xs text-zinc-500 mt-2">
-              If no bids are submitted within this time, the round ends and
-              non-bidders are eliminated.
+              {isClosedAscending
+                ? "Bidders who don't place a bid within this window are eliminated. The auction closes when only one bidder remains."
+                : "If no bids are submitted within this time, the round ends and non-bidders are eliminated."}
             </p>
           </div>
         )}

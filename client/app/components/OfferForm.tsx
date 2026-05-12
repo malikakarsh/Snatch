@@ -8,7 +8,9 @@ interface OfferFormProps {
   engagementId: number;
   status?: string;
   auctionType: string;
+  auctionFormat?: string;
   currentLiveRate?: number;
+  targetRate?: number;
   bidWindowOpen?: boolean;
   winnerId?: string;
   onSuccess?: () => void;
@@ -18,7 +20,9 @@ export default function OfferForm({
   engagementId,
   status,
   auctionType,
+  auctionFormat,
   currentLiveRate,
+  targetRate,
   bidWindowOpen = true,
   winnerId,
   onSuccess,
@@ -33,19 +37,21 @@ export default function OfferForm({
 
   const { user } = useAuth();
 
-  const isPhase1 = status === 'PHASE_1_SEALED' || status === 'PENDING';
+  const isClosedAscending = auctionType === 'ASCENDING' && auctionFormat !== 'OPEN';
+  const isPhase1 = !isClosedAscending && (status === 'PHASE_1_SEALED' || status === 'PENDING');
+  const isRegistering = isClosedAscending && status === 'PENDING';
   const isPhase2 = status === 'PHASE_2_LIVE';
 
-  const isDisqualified = isPhase2 && myStatus !== null && myStatus.lastBidRate === null;
+  const isDisqualified = isPhase2 && !isClosedAscending && myStatus !== null && myStatus.lastBidRate === null;
   const isEliminated = isPhase2 && myStatus !== null && myStatus.isEligibleForPhase2 === false && !myStatus.isWithdrawn;
 
   useEffect(() => {
-    if ((isPhase1 || isPhase2) && user?.email) {
+    if ((isPhase1 || isPhase2 || isRegistering) && user?.email) {
       engagementAPI.getMyStatus(engagementId, user.email)
         .then(data => setMyStatus(data))
         .catch(console.error);
     }
-  }, [isPhase1, isPhase2, user?.email, engagementId, success]);
+  }, [isPhase1, isPhase2, isRegistering, user?.email, engagementId, success]);
 
   const handleRegister = async () => {
     const providerId = user?.email;
@@ -157,6 +163,9 @@ export default function OfferForm({
     }
   };
 
+  // suppress unused-var warning — handleTransitionToLive kept for DESCENDING use
+  void handleTransitionToLive;
+
   return (
     <div className="space-y-4">
       {error && (
@@ -171,10 +180,43 @@ export default function OfferForm({
         </div>
       )}
 
+      {/* ASCENDING CLOSED: registration phase before auction starts */}
+      {isRegistering && (
+        <div className="space-y-6 pt-4">
+          <h4 className="font-medium text-white mb-4">Register for Auction</h4>
+
+          {myStatus?.isWithdrawn ? (
+            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center font-medium">
+              You have withdrawn from this auction.
+            </div>
+          ) : myStatus?.isRegistered ? (
+            <div className="p-5 border border-emerald-500/20 rounded-xl bg-emerald-500/5 text-center">
+              <p className="text-emerald-400 font-medium text-sm">You are registered.</p>
+              <p className="text-zinc-500 text-xs mt-1">
+                Bidding opens when the auction starts. Bids must be{' '}
+                {targetRate != null ? `at least $${targetRate.toFixed(2)}` : 'at or above the target price'}.
+              </p>
+            </div>
+          ) : (
+            <div className="text-center p-6 border border-white/10 rounded-xl bg-white/5">
+              <p className="text-sm text-zinc-400 mb-4">Register now to participate when bidding opens.</p>
+              <button
+                type="button"
+                onClick={handleRegister}
+                disabled={loading}
+                className="py-3 px-8 bg-white text-black font-medium rounded-md transition-all hover:bg-zinc-200"
+              >
+                {loading ? 'Registering...' : 'Register for Auction'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {isPhase1 && (
         <div className="space-y-6 pt-4">
           <h4 className="font-medium text-white mb-4 flex items-center gap-2">
-            <span className="w-6 h-6 flex items-center justify-center bg-white/10 rounded-md text-xs">1</span> 
+            <span className="w-6 h-6 flex items-center justify-center bg-white/10 rounded-md text-xs">1</span>
             Phase 1: Sealed Offers
           </h4>
 
@@ -264,8 +306,10 @@ export default function OfferForm({
       {isPhase2 && (
         <form onSubmit={handleSubmitLiveOffer} className="space-y-6 pt-4">
           <h4 className="font-medium text-white mb-4 flex items-center gap-2">
-            <span className="w-6 h-6 flex items-center justify-center bg-white/10 rounded-md text-xs">2</span> 
-            Submit Live Offer
+            {!isClosedAscending && (
+              <span className="w-6 h-6 flex items-center justify-center bg-white/10 rounded-md text-xs">2</span>
+            )}
+            {isClosedAscending ? 'Place Your Bid' : 'Submit Live Offer'}
           </h4>
 
           {myStatus?.isWithdrawn ? (
@@ -304,6 +348,11 @@ export default function OfferForm({
               {auctionType === 'DESCENDING' && (
                 <p className="text-xs mt-1 text-zinc-500">Rate must be strictly lower than the current live rate</p>
               )}
+              {isClosedAscending && targetRate != null && (
+                <p className="text-xs mt-1 text-zinc-500">
+                  Bid must be at least <span className="text-white font-medium">${targetRate.toFixed(2)}</span> and higher than the current highest bid
+                </p>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -338,9 +387,9 @@ export default function OfferForm({
                   disabled={loading || !bidWindowOpen}
                   className="flex-1 py-3.5 px-6 bg-white text-black font-medium rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:bg-zinc-200"
                 >
-                  {loading ? 'Submitting...' : !bidWindowOpen ? 'Window Closed' : 'Submit Live Offer'}
+                  {loading ? 'Submitting...' : !bidWindowOpen ? 'Window Closed' : isClosedAscending ? 'Place Bid' : 'Submit Live Offer'}
                 </button>
-                
+
                 <button
                   type="button"
                   onClick={handleQuitAuction}
