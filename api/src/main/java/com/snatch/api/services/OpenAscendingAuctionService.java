@@ -296,14 +296,7 @@ public class OpenAscendingAuctionService implements AuctionEngine {
      * no seats are claimed → CANCEL with reason NO_PARTICIPANTS. If seats exist
      * → behave identically to manual startOpenAuction.
      *
-     * A small cushion past the scheduled time is required before we
-     * cancel-for-empty, so that: (a) the 5-second scheduler poll doesn't race
-     * auctions created moments before their start time, and (b) a bidder
-     * loading the page right at the start moment has a brief window to claim a
-     * seat before the auction goes away.
      */
-    private static final int CANCEL_IF_EMPTY_CUSHION_SECONDS = 30;
-
     @Transactional
     public Engagement autoStartOpenAuction(Long engagementId) {
         Engagement eng = engagementRepository.findById(engagementId)
@@ -314,23 +307,11 @@ public class OpenAscendingAuctionService implements AuctionEngine {
         if (!"OPEN".equalsIgnoreCase(eng.getAuctionFormat())) {
             return eng;
         }
-    
-    
+
         long seatCount = seatRepository.countByEngagementId(engagementId);
 
-    if (seatCount == 0) {
-            // Wait for the cushion to pass before we declare "nobody showed up".
-            java.time.LocalDateTime startTime = eng.getOpenStartTime();
-            if (startTime != null) {
-                java.time.LocalDateTime cutoff = startTime.plusSeconds(CANCEL_IF_EMPTY_CUSHION_SECONDS);
-                if (java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).isBefore(cutoff)) {
-                    // Still inside the grace window — give bidders another chance.
-                    return eng;
-                }
-            }
-
-            // Cancel the whole auction. Anyone watching the page will see it
-            // flip to CANCELLED via the status broadcast.
+        if (seatCount == 0) {
+            // Cancel immediately — registration deadline has passed with no bidders.
             eng.setStatus(Engagement.AuctionStatus.CANCELLED);
             eng.setCancelReason("NO_PARTICIPANTS");
             Engagement saved = engagementRepository.save(eng);

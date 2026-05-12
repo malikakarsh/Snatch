@@ -2,6 +2,7 @@ package com.snatch.api.services;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,8 +16,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.snatch.api.models.Engagement;
+import com.snatch.api.models.Registration;
 import com.snatch.api.models.Submission;
 import com.snatch.api.repositories.EngagementRepository;
+import com.snatch.api.repositories.RegistrationRepository;
 import com.snatch.api.repositories.SubmissionRepository;
 
 @Service("ascendingEngine")
@@ -24,6 +27,7 @@ public class AscendingAuctionService implements AuctionEngine {
 
     private final EngagementRepository repository;
     private final SubmissionRepository submissionRepository;
+    private final RegistrationRepository registrationRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
@@ -31,45 +35,33 @@ public class AscendingAuctionService implements AuctionEngine {
     private final Map<Long, Set<String>> activePhase2Bidders = new ConcurrentHashMap<>();
     private final Map<Long, Set<String>> currentRoundBidders = new ConcurrentHashMap<>();
 
-    public AscendingAuctionService(EngagementRepository repository, SubmissionRepository submissionRepository, SimpMessagingTemplate messagingTemplate) {
+    public AscendingAuctionService(
+            EngagementRepository repository,
+            SubmissionRepository submissionRepository,
+            RegistrationRepository registrationRepository,
+            SimpMessagingTemplate messagingTemplate) {
         this.repository = repository;
         this.submissionRepository = submissionRepository;
+        this.registrationRepository = registrationRepository;
         this.messagingTemplate = messagingTemplate;
     }
 
     @Override
     public Engagement initializeAuction(Engagement engagement) {
         if (engagement.getTargetRate() == null || engagement.getTargetRate() <= 0) {
-            throw new IllegalArgumentException("Ascending auctions require a target reserve price greater than zero.");
+            throw new IllegalArgumentException("Ascending auctions require a target price greater than zero.");
         }
 
-        engagement.setStatus(Engagement.AuctionStatus.PHASE_1_SEALED);
+        engagement.setStatus(Engagement.AuctionStatus.PENDING);
+        engagement.setCurrentLiveRate(0.0);
 
-        System.out.println("Initializing an ASCENDING Bid Auction...");
+        System.out.println("Initializing a CLOSED ASCENDING Auction...");
         return repository.save(engagement);
     }
 
     @Override
     public Submission submitSealedOffer(Long engagementId, String providerId, Double rate) {
-        Engagement engagement = repository.findById(engagementId)
-                .orElseThrow(() -> new IllegalArgumentException("Engagement not found."));
-
-        if (engagement.getStatus() != Engagement.AuctionStatus.PHASE_1_SEALED) {
-            throw new IllegalStateException("This engagement is not currently accepting Phase 1 sealed offers.");
-        }
-
-        if (engagement.getPhase1EndTime() != null && LocalDateTime.now(ZoneOffset.UTC).isAfter(engagement.getPhase1EndTime())) {
-            throw new IllegalStateException("Phase 1 has already ended. No more sealed offers accepted.");
-        }
-
-        Submission sealedOffer = new Submission();
-        sealedOffer.setEngagement(engagement);
-        sealedOffer.setProviderId(providerId);
-        sealedOffer.setRate(rate);
-        sealedOffer.setPhase(Submission.SubmissionPhase.PHASE_1);
-
-        System.out.println("Phase 1: Sealed offer received from " + providerId);
-        return submissionRepository.save(sealedOffer);
+        throw new UnsupportedOperationException("Sealed offers are not used in the single-phase ascending auction.");
     }
 
     @Override
@@ -77,39 +69,45 @@ public class AscendingAuctionService implements AuctionEngine {
         Engagement engagement = repository.findById(engagementId)
                 .orElseThrow(() -> new IllegalArgumentException("Engagement not found."));
 
-        if (engagement.getStatus() != Engagement.AuctionStatus.PHASE_1_SEALED) {
-            throw new IllegalStateException("Cannot transition. Engagement is not in Phase 1.");
+        if (engagement.getStatus() != Engagement.AuctionStatus.PENDING) {
+            throw new IllegalStateException("Cannot start live round. Auction is not in PENDING state.");
         }
 
-        Submission highestSealedOffer = submissionRepository
-                .findFirstByEngagementIdAndPhaseOrderByRateDesc(engagementId, Submission.SubmissionPhase.PHASE_1);
+        List<Registration> registrations = registrationRepository.findByEngagementIdAndWithdrawnFalse(engagementId);
 
-        if (highestSealedOffer != null) {
-            engagement.setCurrentLiveRate(highestSealedOffer.getRate());
-            System.out.println("Phase 1 closed. Highest sealed bid: $" + highestSealedOffer.getRate() + ". Phase 2 starting rate: $" + highestSealedOffer.getRate());
-        } else {
-            engagement.setCurrentLiveRate(0.0);
-            System.out.println("Phase 1 closed. No bids found. Starting at $0.");
+        if (registrations.isEmpty()) {
+            engagement.setStatus(Engagement.AuctionStatus.CANCELLED);
+            engagement.setCancelReason("NO_PARTICIPANTS");
+            repository.save(engagement);
+
+            Map<String, Object> cancelEvent = new java.util.HashMap<>();
+            cancelEvent.put("status", "CANCELLED");
+            cancelEvent.put("reason", "NO_PARTICIPANTS");
+            messagingTemplate.convertAndSend("/topic/engagements/" + engagementId + "/status", (Object) cancelEvent);
+            System.out.println("Engagement " + engagementId + " cancelled — no registered bidders.");
+            return engagement;
         }
 
         engagement.setStatus(Engagement.AuctionStatus.PHASE_2_LIVE);
+        engagement.setCurrentLiveRate(0.0);
 
-        java.util.List<String> phase1Bidders = submissionRepository.findDistinctProviderIdsByEngagementIdAndPhase(engagementId, Submission.SubmissionPhase.PHASE_1);
         Set<String> biddersSet = ConcurrentHashMap.newKeySet();
-        biddersSet.addAll(phase1Bidders);
+        for (Registration reg : registrations) {
+            biddersSet.add(reg.getProviderId());
+        }
         activePhase2Bidders.put(engagementId, biddersSet);
-
         currentRoundBidders.put(engagementId, ConcurrentHashMap.newKeySet());
 
         Engagement savedEngagement = repository.save(engagement);
         LocalDateTime timerEndsAt = startRoundTimer(engagementId);
 
-        Map<String, Object> phase2Event = new java.util.HashMap<>();
-        phase2Event.put("status", "PHASE_2_LIVE");
-        phase2Event.put("currentLiveRate", savedEngagement.getCurrentLiveRate());
-        phase2Event.put("timerEndsAt", timerEndsAt.toString() + "Z");
-        messagingTemplate.convertAndSend("/topic/engagements/" + engagementId + "/status", (Object) phase2Event);
+        Map<String, Object> liveEvent = new java.util.HashMap<>();
+        liveEvent.put("status", "PHASE_2_LIVE");
+        liveEvent.put("currentLiveRate", 0.0);
+        liveEvent.put("timerEndsAt", timerEndsAt.toString() + "Z");
+        messagingTemplate.convertAndSend("/topic/engagements/" + engagementId + "/status", (Object) liveEvent);
 
+        System.out.println("Engagement " + engagementId + " started live round with " + biddersSet.size() + " bidders.");
         return savedEngagement;
     }
 
@@ -120,7 +118,7 @@ public class AscendingAuctionService implements AuctionEngine {
                 .orElseThrow(() -> new IllegalArgumentException("Engagement not found."));
 
         if (engagement.getStatus() != Engagement.AuctionStatus.PHASE_2_LIVE) {
-            throw new IllegalStateException("Phase 2 is not currently active for this engagement.");
+            throw new IllegalStateException("The live round is not currently active.");
         }
 
         Set<String> activeBidders = activePhase2Bidders.get(engagementId);
@@ -128,27 +126,21 @@ public class AscendingAuctionService implements AuctionEngine {
             throw new IllegalStateException("You have been eliminated from the auction.");
         }
 
-        boolean participatedInPhase1 = submissionRepository.existsByEngagementIdAndProviderIdAndPhase(engagementId, providerId, Submission.SubmissionPhase.PHASE_1);
-        if (!participatedInPhase1) {
-            throw new IllegalStateException("Only bidders who submitted an offer in Phase 1 can participate in Phase 2.");
+        Set<String> roundBidders = currentRoundBidders.get(engagementId);
+        if (roundBidders != null && roundBidders.contains(providerId)) {
+            throw new IllegalStateException("You have already placed a bid this round. Wait for the next round.");
         }
 
-        // Validate: Phase 2 bids must always go higher. First Phase 2 bid is bounded by the Phase 1 sealed bid.
-        Submission lastOwnPhase2Bid = submissionRepository.findFirstByEngagementIdAndProviderIdAndPhaseOrderBySubmittedAtDesc(
-                engagementId, providerId, Submission.SubmissionPhase.PHASE_2);
-        if (lastOwnPhase2Bid != null) {
-            if (newRate <= lastOwnPhase2Bid.getRate()) {
-                throw new IllegalStateException("Your bid must be higher than your previous bid of $" + lastOwnPhase2Bid.getRate() + ".");
-            }
-        } else {
-            Submission phase1Bid = submissionRepository.findFirstByEngagementIdAndProviderIdAndPhaseOrderBySubmittedAtDesc(
-                    engagementId, providerId, Submission.SubmissionPhase.PHASE_1);
-            if (phase1Bid != null && newRate <= phase1Bid.getRate()) {
-                throw new IllegalStateException("Your Phase 2 bid must be higher than your Phase 1 bid of $" + phase1Bid.getRate() + ".");
-            }
+        Double targetRate = engagement.getTargetRate();
+        if (targetRate != null && newRate < targetRate) {
+            throw new IllegalStateException("Your bid must be at least the target price of $" + targetRate + ".");
         }
 
-        // Always save the bid and count this bidder as having participated this round
+        Double currentRate = engagement.getCurrentLiveRate();
+        if (currentRate != null && currentRate > 0 && newRate <= currentRate) {
+            throw new IllegalStateException("Your bid must be higher than the current highest bid of $" + currentRate + ".");
+        }
+
         Submission liveOffer = new Submission();
         liveOffer.setEngagement(engagement);
         liveOffer.setProviderId(providerId);
@@ -156,22 +148,18 @@ public class AscendingAuctionService implements AuctionEngine {
         liveOffer.setPhase(Submission.SubmissionPhase.PHASE_2);
         submissionRepository.save(liveOffer);
 
-        Set<String> roundBidders = currentRoundBidders.get(engagementId);
         if (roundBidders != null) {
             roundBidders.add(providerId);
         }
 
-        // Only update live rate and broadcast if this is the new highest
-        if (newRate > engagement.getCurrentLiveRate()) {
+        if (newRate > (currentRate != null ? currentRate : 0.0)) {
             engagement.setCurrentLiveRate(newRate);
             repository.save(engagement);
 
             Map<String, Object> rateEvent = new java.util.HashMap<>();
             rateEvent.put("currentLiveRate", newRate);
-            System.out.println("New highest rate! " + providerId + " raised to $" + newRate);
             messagingTemplate.convertAndSend("/topic/engagements/" + engagementId, (Object) rateEvent);
-        } else {
-            System.out.println("Bid accepted for " + providerId + " at $" + newRate + " (not highest, live rate stays at $" + engagement.getCurrentLiveRate() + ")");
+            System.out.println("New highest bid! " + providerId + " raised to $" + newRate);
         }
 
         return true;
@@ -182,9 +170,8 @@ public class AscendingAuctionService implements AuctionEngine {
         Set<String> activeBidders = activePhase2Bidders.get(engagementId);
         if (activeBidders != null) {
             activeBidders.remove(providerId);
-            System.out.println(providerId + " quit the auction " + engagementId);
+            System.out.println(providerId + " quit auction " + engagementId + ". Remaining: " + activeBidders.size());
             if (activeBidders.isEmpty()) {
-                System.out.println("No bidders left. Closing auction " + engagementId);
                 closeAuction(engagementId);
             }
         }
@@ -206,10 +193,7 @@ public class AscendingAuctionService implements AuctionEngine {
         Engagement engagement = repository.findById(engagementId).orElseThrow();
         int countdownSeconds = engagement.getPhase2TimerDuration() != null ? engagement.getPhase2TimerDuration() : 30;
 
-        ScheduledFuture<?> newTimer = scheduler.schedule(() -> {
-            endRound(engagementId);
-        }, countdownSeconds, TimeUnit.SECONDS);
-
+        ScheduledFuture<?> newTimer = scheduler.schedule(() -> endRound(engagementId), countdownSeconds, TimeUnit.SECONDS);
         activeTimers.put(engagementId, newTimer);
 
         LocalDateTime timerEndsAt = LocalDateTime.now(ZoneOffset.UTC).plusSeconds(countdownSeconds);
@@ -230,12 +214,10 @@ public class AscendingAuctionService implements AuctionEngine {
             return;
         }
 
-        // Eliminate bidders who did not bid this round
         if (activeBidders != null) {
             activeBidders.retainAll(roundBidders);
-            System.out.println("Round ended. Remaining eligible bidders: " + activeBidders);
+            System.out.println("Round ended. Remaining bidders: " + activeBidders);
 
-            // If all active bidders were eliminated, close immediately using best bid from all Phase 2 history
             if (activeBidders.isEmpty()) {
                 roundBidders.clear();
                 closeAuction(engagementId);
@@ -245,7 +227,6 @@ public class AscendingAuctionService implements AuctionEngine {
 
         roundBidders.clear();
 
-        // Start next round
         LocalDateTime timerEndsAt = startRoundTimer(engagementId);
 
         Engagement engagement = repository.findById(engagementId).orElseThrow();
@@ -262,7 +243,6 @@ public class AscendingAuctionService implements AuctionEngine {
 
         Engagement engagement = repository.findById(engagementId).orElseThrow();
 
-        // Find highest Phase 2 bid
         Submission winningSubmission = submissionRepository.findFirstByEngagementIdAndPhaseOrderByRateDesc(
                 engagementId, Submission.SubmissionPhase.PHASE_2);
 
@@ -277,7 +257,7 @@ public class AscendingAuctionService implements AuctionEngine {
             System.out.println("Engagement " + engagementId + " CLOSED. Winner: " + winningSubmission.getProviderId() + " at $" + highestBid);
         } else {
             engagement.setStatus(Engagement.AuctionStatus.CANCELLED);
-            System.out.println("Engagement " + engagementId + " CANCELLED. Target $" + targetRate + " not met. Highest bid: $" + highestBid);
+            System.out.println("Engagement " + engagementId + " CANCELLED. No valid bids met target $" + targetRate);
         }
 
         repository.save(engagement);
