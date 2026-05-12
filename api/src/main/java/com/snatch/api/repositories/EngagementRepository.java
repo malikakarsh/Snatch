@@ -1,7 +1,7 @@
 package com.snatch.api.repositories;
 
-import java.util.Optional;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -27,16 +27,22 @@ public interface EngagementRepository extends JpaRepository<Engagement, Long> {
     List<Engagement> findMyAuctionsAsBearer(@Param("email") String email);
 
     // A bidder is associated with an engagement if:
-    //   (a) they submitted at least one Phase 1 sealed bid (CLOSED DESCENDING auctions), OR
-    //   (b) they won at least one item (OPEN auctions — no Phase 1 happens), OR
-    //   (c) they registered for a CLOSED ASCENDING auction.
-    @Query("SELECT DISTINCT e FROM Engagement e WHERE e.id IN (" +
+    //   (a) they won a CLOSED DESCENDING auction (winnerId matches), OR
+    //   (b) they are still registered/bidding in an active DESCENDING auction (Phase 1 submitted, status != CLOSED/CANCELLED), OR
+    //   (c) they won at least one item (OPEN auctions), OR
+    //   (d) they registered for a CLOSED ASCENDING auction.
+    @Query("SELECT DISTINCT e FROM Engagement e WHERE " +
+           "e.id IN (" +
            "  SELECT s.engagement.id FROM Submission s " +
-           "  WHERE s.providerId = :providerId AND s.phase = com.snatch.api.models.Submission.SubmissionPhase.PHASE_1" +
+           "  WHERE s.providerId = :providerId AND s.phase = com.snatch.api.models.Submission.SubmissionPhase.PHASE_1 " +
+           "  AND s.engagement.status NOT IN (com.snatch.api.models.Engagement.AuctionStatus.CLOSED, com.snatch.api.models.Engagement.AuctionStatus.CANCELLED)" +
+           ") OR (" +
+           "  e.winnerId = :providerId" +
            ") OR e.id IN (" +
            "  SELECT i.engagement.id FROM AuctionItem i WHERE i.winnerId = :providerId" +
            ") OR e.id IN (" +
-           "  SELECT r.engagement.id FROM Registration r WHERE r.providerId = :providerId AND r.withdrawn = false" +
+           "  SELECT r.engagement.id FROM Registration r WHERE r.providerId = :providerId AND r.withdrawn = false " +
+           "  AND r.engagement.auctionFormat != 'OPEN' AND r.engagement.auctionType = 'ASCENDING'" +
            ") ORDER BY e.id DESC")
     List<Engagement> findMyAuctionsAsBidder(@Param("providerId") String providerId);
 
