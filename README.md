@@ -4,11 +4,29 @@ A real-time, multi-phase auction platform supporting descending (Dutch) and asce
 
 ---
 
-![](./images/dashboard.png)
+## Contributors
 
-![](./images/auctions.png)
+- Akarsh Malik
+- Hashmath Sheikh
+---
 
-![](./images/won_auctions.png)
+![](./images/auctioneer_dashboard.png)
+
+![](./images/create_auction_form.png)
+
+![](./images/bidder_dashboard.png)
+
+![](./images/register_for_descending.png)
+
+![](./images/register_ascending.png)
+
+![](./images/place_bid_ascending_closed.png)
+
+![](./images/ascending_acutions_open.png)
+
+![](./images/ascending_auctions_live_bidding.png)
+
+![](./images/auctions_won_tab.png)
 
 ## System Architecture
 
@@ -22,25 +40,29 @@ A real-time, multi-phase auction platform supporting descending (Dutch) and asce
 └──────────────────────────┬────────────────────────────────┘
                            │ :3000
                            ▼
-┌──────────────────────────────────────────────────────────┐
-│                  Spring Boot API (Java 25)               │
-│                                                          │
-│   Controllers (REST)                                     │
-│   ├── EngagementController   /api/engagements            │
-│   ├── SubmissionController   /api/engagements/:id/*      │
-│   └── UserController         /api/users                  │
-│                                                          │
-│   Services (Strategy Pattern)                            │
-│   ├── DescendingAuctionService  -  Dutch auction logic   │
-│   └── AscendingAuctionService   -  English auction logic │
-│                                                          │
-│   WebSocket                                              │
-│   ├── /topic/engagements/:id/status  -  phase events     │
-│   └── /topic/engagements/:id         -  live rate updates│
-│                                                          │
-│   Scheduler                                              │
-│   └── AuctionScheduler  -  auto-transition Phase 1 to 2  │
-└──────────────────────────┬───────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                  Spring Boot API (Java 25)                      │
+│                                                                 │
+│   Controllers (REST)                                            │
+│   ├── EngagementController   /api/engagements                   │
+│   ├── SubmissionController   /api/engagements/:id/*             │
+│   └── UserController         /api/users                         │
+│                                                                 │
+│   Services (Strategy Pattern)                                   │
+│   ├── DescendingAuctionService  -  Dutch auction logic          │
+│   ├── AscendingAuctionService   -  Closed English auction logic │
+│   └── OpenAscendingAuctionService - Open English auction logic  │
+│                                                                 │
+│   WebSocket                                                     │
+│   ├── /topic/engagements/:id/status  -  phase events            │
+│   └── /topic/engagements/:id         -  live rate updates       │
+│                                                                 │
+│   Scheduler                                                     │
+│   └── AuctionScheduler  -  auto-transition auctions:            │
+│       • CLOSED (PHASE_1_SEALED for Descending, PENDING for      │
+│          Ascending + phase2StartTime past) → PHASE_2_LIVE       │
+│       • OPEN (PENDING + openStartTime past) → auto-start        │
+└──────────────────────────┬──────────────────────────────────────┘
                            │ :8080
                            ▼
 ┌──────────────────────────────────────────────────────────┐
@@ -54,7 +76,16 @@ A real-time, multi-phase auction platform supporting descending (Dutch) and asce
 
 ## Auction Mechanics
 
-### Two-Phase Structure
+### Auction Formats
+
+**Closed Auctions** (single winner for the entire auction)
+- **Descending (Dutch) Auction**: Two-phase structure with sealed bids followed by live round-based elimination.
+- **Ascending (English) Auction**: Single-phase live bidding starting from a base rate, with bids increasing until the target price is met or time expires.
+
+**Open Auctions** (multiple items, multiple winners)
+- **Ascending (English) Auction**: Single-phase live bidding per item, with items auctioned sequentially in real-time.
+
+### Two-Phase Structure (Descending Auctions Only)
 
 **Phase 1 - Sealed Bids**
 - Bidders register and submit sealed offers blindly (no visibility into other bids)
@@ -71,16 +102,22 @@ A real-time, multi-phase auction platform supporting descending (Dutch) and asce
   - **1+ bids submitted** → non-bidders are eliminated; a new round starts
 - Bidders can quit at any time; the auction ends only when all bidders have quit
 
+### Single-Phase Live Bidding (Ascending Auctions)
+
+- Auction starts immediately after registration period (for Closed) or at scheduled time (for Open)
+- Bidders place live bids in real-time
+- For Closed Ascending: Bids must be higher than the current rate; auction ends when target price is met or time expires
+- For Open Ascending: Items are auctioned sequentially; each item has a grace period for first bid, then live bidding with silence resets
+
 ### Descending (Dutch) Auction
 - Starting rate = `min(maxStartingRate, lowestPhase1Bid)`
 - Phase 2 bids must be strictly lower than the bidder's own last bid
 - Winner = bidder with the lowest final rate when the auction closes
 
 ### Ascending (English) Auction
-- Starting rate = highest Phase 1 bid
-- Phase 2 bids must be strictly higher than the bidder's own last bid
-- Winner = bidder with the highest final rate, **only if it meets the target reserve price**
-- If the target price is not met at close, the auction is **cancelled** — no winner
+- **Closed Format**: Starting rate set by auctioneer; bids increase until target price is met
+- **Open Format**: Per-item bidding with configurable grace periods and silence resets
+- Winner(s) = bidder(s) with the highest final rate(s) meeting reserve prices
 
 ---
 
@@ -171,7 +208,7 @@ The `DB_HOST` variable is set to `postgres` (the Docker service name) by `docker
 
 ```bash
 # Clone the repo
-git clone <repo-url>
+git clone https://github.com/malikakarsh/Snatch.git
 cd Snatch
 
 # Configure credentials
@@ -261,6 +298,10 @@ Snatch/
 │   │   ├── models/               # JPA entities
 │   │   ├── repositories/         # Spring Data JPA repos
 │   │   └── services/             # Auction engines + scheduler
+│   │       ├── AuctionScheduler.java
+│   │       ├── DescendingAuctionService.java
+│   │       ├── AscendingAuctionService.java
+│   │       └── OpenAscendingAuctionService.java
 │   ├── src/main/resources/
 │   │   └── application.properties  # All config via env vars
 │   ├── Dockerfile
